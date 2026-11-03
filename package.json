@@ -1,6 +1,6 @@
 {
   "name": "@fish-under-sea/magpie-neartoken",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "NearToken for magpie: sign in to neartoken.cc from a page of magpie's own window, see the balance, vouchers and spending, top up without leaving it, and let magpie pick the models as it does for any provider.",
   "type": "module",
   "license": "MIT",
