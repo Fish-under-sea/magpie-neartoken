@@ -159,7 +159,7 @@ func (m *Manager) connect(params map[string]any) (any, error) {
 		return m.state(context.Background()), nil
 	}
 	aff, _ := params["affCode"].(string)
-	auth, err := m.client.authorize(context.Background(), "magpie", aff)
+	auth, err := m.client.authorize(context.Background(), ClientName, aff)
 	if err != nil {
 		return nil, err
 	}

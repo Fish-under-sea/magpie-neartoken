@@ -43,8 +43,12 @@ func newFakeSite(t *testing.T) *fakeSite {
 	mux.HandleFunc("/api/dsh/device/authorize", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body["client_name"] != "magpie" {
-			t.Errorf("client_name = %v, want magpie", body["client_name"])
+		if body["client_name"] != ClientName {
+			t.Errorf("client_name = %v, want %q", body["client_name"], ClientName)
+		}
+		// 站点日志里认得出是这一头在问，而不是 dsh 那位
+		if ua := r.Header.Get("user-agent"); ua != UserAgent {
+			t.Errorf("user-agent = %q, want %q", ua, UserAgent)
 		}
 		write(w, map[string]any{"success": true, "data": map[string]any{
 			"device_code":               "dev-1",
@@ -168,7 +172,7 @@ func TestAuthorizeAndGrant(t *testing.T) {
 	site := newFakeSite(t)
 	c := newClient(site.srv.URL)
 
-	auth, err := c.authorize(t.Context(), "magpie", "aB3d")
+	auth, err := c.authorize(t.Context(), ClientName, "aB3d")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -217,7 +221,7 @@ func TestPollStates(t *testing.T) {
 
 func TestBadAffiliateCodeIsDropped(t *testing.T) {
 	site := newFakeSite(t)
-	auth, err := newClient(site.srv.URL).authorize(t.Context(), "magpie", "bad code!")
+	auth, err := newClient(site.srv.URL).authorize(t.Context(), ClientName, "bad code!")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}

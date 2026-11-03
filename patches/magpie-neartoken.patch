@@ -309,7 +309,7 @@ index 0000000..17acee0
 +}
 diff --git a/internal/neartoken/manager.go b/internal/neartoken/manager.go
 new file mode 100644
-index 0000000..495b73d
+index 0000000..e5003ad
 --- /dev/null
 +++ b/internal/neartoken/manager.go
 @@ -0,0 +1,501 @@
@@ -474,7 +474,7 @@ index 0000000..495b73d
 +		return m.state(context.Background()), nil
 +	}
 +	aff, _ := params["affCode"].(string)
-+	auth, err := m.client.authorize(context.Background(), "magpie", aff)
++	auth, err := m.client.authorize(context.Background(), ClientName, aff)
 +	if err != nil {
 +		return nil, err
 +	}
@@ -816,10 +816,10 @@ index 0000000..495b73d
 +}
 diff --git a/internal/neartoken/neartoken_test.go b/internal/neartoken/neartoken_test.go
 new file mode 100644
-index 0000000..22baad6
+index 0000000..2e2a437
 --- /dev/null
 +++ b/internal/neartoken/neartoken_test.go
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,368 @@
 +package neartoken
 +
 +import (
@@ -865,8 +865,12 @@ index 0000000..22baad6
 +	mux.HandleFunc("/api/dsh/device/authorize", func(w http.ResponseWriter, r *http.Request) {
 +		var body map[string]any
 +		_ = json.NewDecoder(r.Body).Decode(&body)
-+		if body["client_name"] != "magpie" {
-+			t.Errorf("client_name = %v, want magpie", body["client_name"])
++		if body["client_name"] != ClientName {
++			t.Errorf("client_name = %v, want %q", body["client_name"], ClientName)
++		}
++		// 站点日志里认得出是这一头在问，而不是 dsh 那位
++		if ua := r.Header.Get("user-agent"); ua != UserAgent {
++			t.Errorf("user-agent = %q, want %q", ua, UserAgent)
 +		}
 +		write(w, map[string]any{"success": true, "data": map[string]any{
 +			"device_code":               "dev-1",
@@ -990,7 +994,7 @@ index 0000000..22baad6
 +	site := newFakeSite(t)
 +	c := newClient(site.srv.URL)
 +
-+	auth, err := c.authorize(t.Context(), "magpie", "aB3d")
++	auth, err := c.authorize(t.Context(), ClientName, "aB3d")
 +	if err != nil {
 +		t.Fatalf("authorize: %v", err)
 +	}
@@ -1039,7 +1043,7 @@ index 0000000..22baad6
 +
 +func TestBadAffiliateCodeIsDropped(t *testing.T) {
 +	site := newFakeSite(t)
-+	auth, err := newClient(site.srv.URL).authorize(t.Context(), "magpie", "bad code!")
++	auth, err := newClient(site.srv.URL).authorize(t.Context(), ClientName, "bad code!")
 +	if err != nil {
 +		t.Fatalf("authorize: %v", err)
 +	}
@@ -1282,10 +1286,10 @@ index 0000000..364451c
 +}
 diff --git a/internal/neartoken/site.go b/internal/neartoken/site.go
 new file mode 100644
-index 0000000..3586f6d
+index 0000000..a7fdd7b
 --- /dev/null
 +++ b/internal/neartoken/site.go
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,185 @@
 +// Package neartoken 把 NearToken（https://neartoken.cc，一个 New API 部署）
 +// 接进 magpie：设备授权登录、余额与代金券、用量看板、在线充值，以及把站点
 +// 作为 magpie 自己的一个供应商挂上（模型与路由仍由 magpie 原生负责）。
@@ -1312,12 +1316,26 @@ index 0000000..3586f6d
 +// ProviderID 是这个插件在 magpie 里挂的供应商 id：一个就好，不支持多账号。
 +const ProviderID = "neartoken"
 +
++// ClientName 是站点确认页上显示的这头设备的称呼，也是站点写进令牌名的依据。
++//
++// 它故意不是 dsh-neartoken 的「DSH 插件」：那位作者的令牌、日志与授权记录
++// 都靠 DSH 这个标识认人，我们的连接混进同一串标识里，他排查时就分不清哪一条
++// 是自己的用户。magpie 就写 magpie，两边各认各的。
++const ClientName = "magpie"
++
++// UserAgent 让站点的访问日志与 New API 的请求记录分得出来源。不是标准要求，
++// 但排查时省一次猜。
++const UserAgent = "magpie-neartoken"
++
 +// 页面对着这些码分支；字符串是页面与 Go 共同的语言，不要随手改。
 +const (
-+	CodeUnreachable    = "SITE_UNREACHABLE"
-+	CodeInvalidAnswer  = "SITE_RESPONSE_INVALID"
-+	CodeRefused        = "SITE_REFUSED"
-+	CodeNotConnected   = "NOT_CONNECTED"
++	CodeUnreachable   = "SITE_UNREACHABLE"
++	CodeInvalidAnswer = "SITE_RESPONSE_INVALID"
++	CodeRefused       = "SITE_REFUSED"
++	CodeNotConnected  = "NOT_CONNECTED"
++	// CodeTokenRequired 是站点为「只有 DSH 设备授权签发的令牌才能充值」写的码，
++	// 名字里的 DSH 是站点自己的历史，不是本插件的标识；这里只按它分支，对外
++	// 一律说「这把密钥不是本插件登录签发的」。
 +	CodeTokenRequired  = "DSH_TOKEN_REQUIRED"
 +	CodeTopupOff       = "TOPUP_UNAVAILABLE"
 +	CodeNoUsage        = "NO_USAGE"
@@ -1387,6 +1405,8 @@ index 0000000..3586f6d
 +		return nil, fail(CodeBadParam, "请求地址无效：%v", err)
 +	}
 +	req.Header.Set("accept", "application/json")
++	// 站点日志里认得出是哪一个客户端在问，不靠猜
++	req.Header.Set("user-agent", UserAgent)
 +	if body != nil {
 +		req.Header.Set("content-type", "application/json")
 +	}

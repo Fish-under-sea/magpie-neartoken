@@ -2,6 +2,21 @@
 
 这份文档说的是「页面能问宿主什么、宿主替它做什么、哪些事故意不做」。它是 `host/internal/neartoken` 与 `page/` 的共同说明；两边改之前先读一遍。
 
+## 标识：和 dsh-neartoken 分开
+
+本插件不是 dsh-neartoken 的兼容层，也不复用它的代码、配置或令牌。两边在站点侧必须一眼分得开，否则那位作者排查时会把自己用户的问题和 magpie 的连接混在一起：
+
+| 位置 | 本插件 | dsh-neartoken |
+| --- | --- | --- |
+| `client_name`（确认页上的称呼） | `magpie`（`ClientName`） | `DSH 插件` |
+| 请求 UA | `magpie-neartoken`（`UserAgent`） | DSH 自己的 |
+| magpie 里的供应商 id | `neartoken` | 不适用 |
+| 站点上的令牌名 | 站点按 `client_name` 写 | `DSH` |
+
+共用的只有站点已实现的端点：设备授权、钱包、用量、充值、定价。这些是站点的接口，不是哪一方的实现。
+
+站点对「只有 DSH 授权签发的钥匙能充值」回的是 `DSH_TOKEN_REQUIRED`；这是站点的历史码，插件只按它分支，对外说「这把密钥不是本插件登录签发的」。
+
 ## 为什么需要宿主
 
 magpie 的插件页跑在一个沙箱帧里，策略是 `sandbox allow-scripts` 加 `connect-src 'none'`：页面加载得了自己的文件，发不出任何网络请求，也调不到 `/api`。这不是疏漏，是设计——插件页不该拿到窗口的 API。

@@ -54,6 +54,23 @@
 
 `package.json` 必须原样声明这张表：magpie 按它放行，宿主再按同一份声明校验一次。
 
+## 和 dsh-neartoken 的关系：只共用站点，不混用标识
+
+这不是 dsh-neartoken 的兼容层，也没有复用它的代码、配置或令牌。两边的连接方式不一样：
+
+| | dsh-neartoken | 本插件 |
+| --- | --- | --- |
+| 宿主 | DSH | magpie |
+| 请求由谁发 | DSH Host | magpie 本体（`/api/plugin-pages/call`） |
+| 站点确认页上的称呼 | `DSH 插件` | `magpie` |
+| 请求的 UA | DSH 自己的 | `magpie-neartoken` |
+| 令牌 | 站点写的 `DSH` | 站点按 `magpie` 写 |
+| 供应商 | DSH 的 `neartoken` provider | magpie 的 `neartoken` 供应商 |
+
+共用的只有站点已经实现的那批设备授权端点（`/api/dsh/device/authorize`、`/token`、`/revoke`）与钱包、用量、充值端点——那是站点自己的接口，不是哪一家的实现。作者的 `DSH` 标识原样留着：他的令牌、日志和授权记录仍然只认 `DSH`，我们的连接写 `magpie`，两边在站点后台一眼分得开。
+
+站点对「只有 DSH 授权签发的钥匙能充值」这件事回的是 `DSH_TOKEN_REQUIRED`，那是站点的历史码；插件只按它分支，对外一律说「这把密钥不是本插件登录签发的」。
+
 ## 页面怎么用
 
 1. 装上包，侧边栏「插件」→「NearToken」。
