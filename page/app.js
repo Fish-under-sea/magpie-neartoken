@@ -77,7 +77,15 @@
   /** showError 把宿主的话放到页脚的一条提示上，不弹窗。 */
   let lastError = ''
   function showError(error) {
-    lastError = String(error && error.message ? error.message : error)
+    const said = String(error && error.message ? error.message : error)
+    lastError = said
+    // 宿主侧仍在建 key+URL 供应商时，会撞上 magpie 的内置订阅 id。
+    // 这不是页面能修的，给一句能照做的指引。
+    if (/is the id of the .* subscription/i.test(said)) {
+      lastError = '宿主侧还没适配：magpie 把 neartoken 当内置订阅的 id，普通供应商不能占它。' +
+        '请先到 magpie 的供应商页里用 NearToken 自己的登录（插件已提供），' +
+        '或等宿主按 issue #22 适配后再回这里连接。'
+    }
     render()
   }
 
