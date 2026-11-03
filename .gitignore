@@ -1,0 +1,7 @@
+# 构建与抓取留下的一次性产物
+.work/
+dist/
+node_modules/
+
+# 本地打包出来的包
+*.tgz

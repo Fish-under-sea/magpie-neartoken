@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NearToken</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="head">
+    <img class="mark" src="icon.png" alt="NearToken">
+    <div class="grow">
+      <h1>NearToken</h1>
+      <p class="sub" id="site">neartoken.cc</p>
+    </div>
+    <span class="chip" id="status"><span class="dot"></span><span id="status-text">正在读取</span></span>
+    <button class="ghost" id="disconnect" hidden>断开连接</button>
+  </header>
+  <main id="view" aria-live="polite">
+    <div class="card"><p class="brief">正在读取 NearToken 的状态…</p></div>
+  </main>
+</div>
+<script src="_magpie/bridge.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

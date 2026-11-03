@@ -1,0 +1,54 @@
+{
+  "name": "@fish-under-sea/magpie-neartoken",
+  "version": "0.1.0",
+  "description": "NearToken for magpie: sign in to neartoken.cc from a page of magpie's own window, see the balance, vouchers and spending, top up without leaving it, and let magpie pick the models as it does for any provider.",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "page",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "magpie",
+    "magpie-page",
+    "neartoken",
+    "new-api",
+    "relay"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fish-under-sea/magpie-neartoken.git"
+  },
+  "homepage": "https://github.com/Fish-under-sea/magpie-neartoken#readme",
+  "bugs": {
+    "url": "https://github.com/Fish-under-sea/magpie-neartoken/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "magpie": {
+    "icon": "page/icon.png",
+    "page": {
+      "title": "NearToken",
+      "titles": {
+        "zh": "NearToken",
+        "zh-TW": "NearToken",
+        "ja": "NearToken",
+        "de": "NearToken"
+      },
+      "file": "page/index.html",
+      "icon": "page/icon.svg"
+    },
+    "calls": [
+      "neartoken:state",
+      "neartoken:connect",
+      "neartoken:cancel",
+      "neartoken:open",
+      "neartoken:disconnect",
+      "neartoken:refresh",
+      "neartoken:usage",
+      "neartoken:topup"
+    ]
+  }
+}
