@@ -162,11 +162,12 @@
     if (lastError) frag.append(el('p', { class: 'note bad', text: lastError }))
     if (pendingAct) frag.append(el('p', { class: 'note', text: '正在处理：' + pendingAct }))
     body.replaceChildren(frag)
+    if (view.pending) paintCountdown()
   }
 
   /** 未连接：说清会发生什么，再给一个按钮。 */
   function connectCard() {
-    return card('连接 NearToken',
+    return card('连接中转站',
       el('p', { class: 'brief' },
         '把 ', el('b', { text: 'neartoken.cc' }), ' 接成 magpie 的供应商：登录在站点自己的页面完成，' +
         '插件不接触密码。连接之后模型由 magpie 的供应商页统一选择，这里只管账户与额度。'),
