@@ -28,7 +28,7 @@ func storedKey() (string, bool) {
 //
 // 已有的那一条只改钥匙与基址，其余（用户改过的路由、模型选择、请求头）
 // 一律不动 —— 重新登录不该把用户设好的东西清掉。第一次连接才建这一条。
-func attach(baseURL, key, tokenName string, cat *Catalog) error {
+func attach(baseURL, key string, cat *Catalog) error {
 	p, err := provider.Find(ProviderID)
 	if err != nil || p == nil {
 		p = &provider.Provider{

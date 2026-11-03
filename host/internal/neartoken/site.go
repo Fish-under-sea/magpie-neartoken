@@ -24,12 +24,19 @@ const DefaultBaseURL = "https://neartoken.cc"
 // ProviderID 是这个插件在 magpie 里挂的供应商 id：一个就好，不支持多账号。
 const ProviderID = "neartoken"
 
-// ClientName 是站点确认页上显示的这头设备的称呼，也是站点写进令牌名的依据。
+// ClientName 是站点确认页上显示的这头设备的称呼。
 //
 // 它故意不是 dsh-neartoken 的「DSH 插件」：那位作者的令牌、日志与授权记录
 // 都靠 DSH 这个标识认人，我们的连接混进同一串标识里，他排查时就分不清哪一条
-// 是自己的用户。magpie 就写 magpie，两边各认各的。
-const ClientName = "magpie"
+// 是自己的用户。这里写 Magpie。
+const ClientName = "Magpie"
+
+// TokenName 是请求站点给这把密钥起的名字。
+//
+// 站点按 client_name 命名时它就是令牌名；站点另有实现时会忽略它——带上不会
+// 出错，但**令牌名最终由站点决定**。所以插件不把它当事实：页面显示的是站点
+// 回的 token_name，回什么显示什么。
+const TokenName = "Magpie"
 
 // UserAgent 让站点的访问日志与 New API 的请求记录分得出来源。不是标准要求，
 // 但排查时省一次猜。

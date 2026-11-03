@@ -63,8 +63,12 @@ func withAffiliate(raw, code string) string {
 }
 
 // authorize 向站点要一个新的授权码。
+//
+// 请求体除 client_name 外还带 token_name：站点按它命名时，令牌就是 Magpie；
+// 站点忽略它也没有副作用——令牌名最终以站点回的 token_name 为准。
 func (c *client) authorize(ctx context.Context, clientName, aff string) (*Authorization, *Error) {
-	env, err := c.call(ctx, "POST", authorizePath, map[string]any{"client_name": clientName}, "")
+	body := map[string]any{"client_name": clientName, "token_name": TokenName}
+	env, err := c.call(ctx, "POST", authorizePath, body, "")
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +129,7 @@ func (c *client) poll(ctx context.Context, deviceCode string) (PollOutcome, *Gra
 			return 0, nil, fail(CodeInvalidAnswer, "设备授权应答缺少 access_token")
 		}
 		if data.TokenName == "" {
-			data.TokenName = "magpie"
+			data.TokenName = TokenName
 		}
 		return PollGranted, &Grant{AccessToken: data.AccessToken, TokenName: data.TokenName, User: data.User}, nil
 	}

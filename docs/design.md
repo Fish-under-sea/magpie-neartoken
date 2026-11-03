@@ -8,10 +8,12 @@
 
 | 位置 | 本插件 | dsh-neartoken |
 | --- | --- | --- |
-| `client_name`（确认页上的称呼） | `magpie`（`ClientName`） | `DSH 插件` |
+| `client_name`（确认页上的称呼） | `Magpie`（`ClientName`） | `DSH 插件` |
+| 请求的令牌名 | `token_name: Magpie`（`TokenName`） | 不带，站点写死 `DSH` |
 | 请求 UA | `magpie-neartoken`（`UserAgent`） | DSH 自己的 |
 | magpie 里的供应商 id | `neartoken` | 不适用 |
-| 站点上的令牌名 | 站点按 `client_name` 写 | `DSH` |
+
+令牌名最终由站点决定：站点按 `client_name` / `token_name` 命名时就是 **Magpie**，站点若沿用它写死的那套命名就不会变。插件不把名字当事实——页面显示站点回的 `token_name`，断开按密钥撤销，不靠名字认人。
 
 共用的只有站点已实现的端点：设备授权、钱包、用量、充值、定价。这些是站点的接口，不是哪一方的实现。
 
@@ -29,7 +31,7 @@ magpie 的插件页跑在一个沙箱帧里，策略是 `sandbox allow-scripts` 
 2. `name` 必须在那个插件 `package.json` 的 `magpie.calls` 里；
 3. 才执行。
 
-所以 `neartoken:*` 这八条既写在 `package.json` 里，也在 `internal/gui/pluginpagecall.go` 里分派给 `internal/neartoken`。两处都对上，页面才拿得到数据。
+所以 `neartoken:*` 这八条要过三道门：`package.json` 的 `magpie.calls`、`internal/plugin/page.go` 的 `PageCalls`（`callsKeeping` 只留表里的名字，别的**静默丢掉**）、`internal/gui/pluginpagecall.go` 的分派。少任何一处，页面只会收到「NearToken doesn't ask for neartoken:state」而不是一句能读懂的失败。`internal/plugin/neartoken_calls_test.go` 钉的就是这道过滤。
 
 ## 数据从哪来
 

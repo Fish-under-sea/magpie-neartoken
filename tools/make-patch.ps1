@@ -15,8 +15,8 @@ $root = Split-Path -Parent $PSScriptRoot
 if (-not $Out) { $Out = Join-Path $root 'patches\magpie-neartoken.patch' }
 New-Item -ItemType Directory -Force (Split-Path -Parent $Out) | Out-Null
 
-$work = Join-Path $root '.work\magpie-net'
-if (-not (Test-Path $work)) { throw "找不到工作树：$work" }
+$hostSrc = Join-Path $root 'host\internal'
+if (-not (Test-Path $hostSrc)) { throw "找不到 host 源码：$hostSrc" }
 if (-not (Test-Path $Upstream)) { throw "找不到上游源码：$Upstream" }
 if (-not (Test-Path $FishPatch)) { throw "找不到 FISH 补丁：$FishPatch" }
 
@@ -35,9 +35,13 @@ try {
 }
 finally { Pop-Location }
 
-# 本仓库的改动只有这两处：新包，与一条分派。
-Copy-Item -Recurse (Join-Path $work 'internal\neartoken') (Join-Path $tmp 'internal\neartoken') -Force
-Copy-Item (Join-Path $work 'internal\gui\pluginpagecall.go') (Join-Path $tmp 'internal\gui\pluginpagecall.go') -Force
+# 本仓库的改动全在 host\internal 下，把它整树盖到基线上：host\ 就是补丁
+# 的真源，加文件不必改这个脚本。
+$hostSrc = Join-Path $root 'host\internal'
+if (-not (Test-Path $hostSrc)) { throw "找不到 host 源码：$hostSrc" }
+foreach ($item in Get-ChildItem $hostSrc) {
+  Copy-Item -Recurse -Force $item.FullName (Join-Path $tmp 'internal')
+}
 
 Push-Location $tmp
 try {

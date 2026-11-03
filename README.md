@@ -62,12 +62,21 @@
 | --- | --- | --- |
 | 宿主 | DSH | magpie |
 | 请求由谁发 | DSH Host | magpie 本体（`/api/plugin-pages/call`） |
-| 站点确认页上的称呼 | `DSH 插件` | `magpie` |
+| 站点确认页上的称呼 | `DSH 插件` | `Magpie` |
 | 请求的 UA | DSH 自己的 | `magpie-neartoken` |
-| 令牌 | 站点写的 `DSH` | 站点按 `magpie` 写 |
+| 请求的令牌名 | 不带，站点写死 `DSH` | 带 `token_name: Magpie` |
 | 供应商 | DSH 的 `neartoken` provider | magpie 的 `neartoken` 供应商 |
 
-共用的只有站点已经实现的那批设备授权端点（`/api/dsh/device/authorize`、`/token`、`/revoke`）与钱包、用量、充值端点——那是站点自己的接口，不是哪一家的实现。作者的 `DSH` 标识原样留着：他的令牌、日志和授权记录仍然只认 `DSH`，我们的连接写 `magpie`，两边在站点后台一眼分得开。
+共用的只有站点已经实现的那批设备授权端点（`/api/dsh/device/authorize`、`/token`、`/revoke`）与钱包、用量、充值端点——那是站点自己的接口，不是哪一家的实现。作者的 `DSH` 标识原样留着：他的令牌、日志和授权记录仍然只认 `DSH`，我们的连接报 `Magpie`，两边在站点后台一眼分得开。
+
+### 站点上的令牌名由站点决定
+
+插件在发起授权时带两个名字：`client_name: Magpie`（确认页上写「Magpie 请求接入」）与 `token_name: Magpie`（希望站点给这把密钥起的名字）。
+
+- 站点按 `client_name` 或 `token_name` 命名时，站点后台里这把钥匙就叫 **Magpie**；
+- 站点若沿用它给 DSH 设备授权写死的那套命名，令牌名仍然是它自己的那一套——那是站点侧的实现，客户端改不了。
+
+插件不把名字当事实：页面「令牌名」一栏显示站点回的 `token_name`，回什么显示什么；断开时按这把密钥撤销，不靠名字认人。要让站点后台固定显示 **Magpie**，需要在站点侧让 `/api/dsh/device/*` 用请求里的 `client_name` / `token_name` 命名令牌，而不是写死。
 
 站点对「只有 DSH 授权签发的钥匙能充值」这件事回的是 `DSH_TOKEN_REQUIRED`，那是站点的历史码；插件只按它分支，对外一律说「这把密钥不是本插件登录签发的」。
 
@@ -78,6 +87,17 @@
 3. 点「打开确认页」，用平时的方式登录站点——密码、GitHub、Discord、LinuxDo、OIDC、Telegram、微信、Passkey 都在站点自己的页面上完成。
 4. 批准后自动接入：余额、代金券、看板、充值一次到齐；模型同时出现在 magpie 的供应商页。
 5. 断开连接会撤销站点上这把密钥，并删掉 magpie 里这一条供应商。
+
+## 排错
+
+| 画面 / 报错 | 原因 | 怎么办 |
+| --- | --- | --- |
+| `NearToken doesn't ask for neartoken:state` | 宿主补丁的 `PageCalls` 里没有这八条。只写在 `package.json` 里会被 `callsKeeping` 静默丢掉，窗口那边就只剩一句「没问过」 | 重新打 `patches/magpie-neartoken.patch`（0.1.4 起含 `internal/plugin/page.go` 的改动），再重启 magpie |
+| 「这个 magpie 还没有插件页的调用通道」 | 官方原版 magpie，没有插件页调用通道 | 同上，需要带通道的构建 |
+| 插件列表里是灰书页 / 没有图标 | 包里的 `page/icon.png` 没装到 | 用 npm 装或 release 的 tgz，别只拷 `page/index.html` |
+| 页面空白，10 秒后变成「停止工作」 | 页面没应答 hello | 确认 magpie 版本，或看窗口日志 |
+
+自证一遍（不用开窗口）：`magpie web` 会打印带一次性 key 的链接；用它换 cookie 后请求 `/api/plugin-pages`，那个页面的 `calls` 里应当有八条 `neartoken:*`。
 
 ## 仓库结构
 
@@ -96,15 +116,18 @@
 
 ## 自己给 magpie 加通道
 
-前提：magpie 源码已经是 `v0.1.2732` + FISH 的 `magpie-v0.1.2732+fish.9.patch`（那一版已经带了插件页调用通道），本仓库的补丁只往上再叠两件事：
+前提：magpie 源码已经是 `v0.1.2732` + FISH 的 `magpie-v0.1.2732+fish.9.patch`（那一版已经带了插件页调用通道），本仓库的补丁只往上再叠三件事：
 
 1. `internal/neartoken`：设备授权、钱包、用量、充值、目录，以及把站点挂成供应商；
-2. `internal/gui/pluginpagecall.go` 里多一条 `neartoken:` 前缀的分派。
+2. `internal/plugin/page.go` 的 `PageCalls`：补上 `neartoken:*` 八条——**两处都要列**，只写在 `package.json` 里会被 `callsKeeping` 静默丢掉，页面只会看到「NearToken doesn't ask for neartoken:state」；
+3. `internal/gui/pluginpagecall.go` 里多一条 `neartoken:` 前缀的分派。
 
 ```powershell
 git -C ..\upstream-2732 apply patches\magpie-neartoken.patch
 pwsh -File tools\build.ps1 -Upstream ..\upstream-2732 -Out dist\magpie.exe
 ```
+
+打完之后可以自证一遍：`magpie web` 打印的链接带一次性 key，用它换 cookie 后请求 `/api/plugin-pages`，那个页面的 `calls` 里应当有八条 `neartoken:*`；`POST /api/plugin-pages/call` 带 `{"name":"neartoken:state"}` 应当回 `configured:false`。
 
 `internal/neartoken` 的测试用 `httptest` 起一个假站点，不碰网络：
 

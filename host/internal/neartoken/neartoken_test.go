@@ -50,6 +50,10 @@ func newFakeSite(t *testing.T) *fakeSite {
 		if ua := r.Header.Get("user-agent"); ua != UserAgent {
 			t.Errorf("user-agent = %q, want %q", ua, UserAgent)
 		}
+		// 请求里带着希望的令牌名；站点认它就用它
+		if name := body["token_name"]; name != TokenName {
+			t.Errorf("token_name = %v, want %q", name, TokenName)
+		}
 		write(w, map[string]any{"success": true, "data": map[string]any{
 			"device_code":               "dev-1",
 			"user_code":                 "K7QM-3XPD",

@@ -244,7 +244,7 @@ func (m *Manager) completeAuth(grant *Grant) {
 
 	cur := m.currency(ctx)
 	cat, _ := m.client.readCatalog(ctx)
-	if err := attach(m.baseURL, grant.AccessToken, grant.TokenName, cat); err != nil {
+	if err := attach(m.baseURL, grant.AccessToken, cat); err != nil {
 		m.finishAuth("密钥已拿到，但没能挂上 magpie 的供应商：" + err.Error())
 		return
 	}
