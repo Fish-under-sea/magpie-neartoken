@@ -202,6 +202,9 @@
   function render() {
     if (!view) return
     const body = $('view')
+    // 后台刷新仍可能重绘整页：记录广场与筛选栏各自的滚动位置。
+    const oldAside = tab === 'market' ? body.querySelector('.market-aside') : null
+    const scroll = oldAside ? { x: window.scrollX, y: window.scrollY, aside: oldAside.scrollTop } : null
     const frag = document.createDocumentFragment()
     if (view.pending) {
       setStatus('等待确认', 'warn')
@@ -222,6 +225,13 @@
     if (notice) frag.append(el('p', { class: 'note', text: notice }))
     if (pendingAct) frag.append(el('p', { class: 'note', text: '正在处理：' + pendingAct }))
     body.replaceChildren(frag)
+    if (tab === 'market' && view.configured && !view.pending) {
+      refreshMarketList()
+      if (scroll) {
+        body.querySelector('.market-aside').scrollTop = scroll.aside
+        window.scrollTo({ left: scroll.x, top: scroll.y, behavior: 'instant' })
+      }
+    }
     if (view.pending) paintCountdown()
     // 首页四张卡等高：以账户卡为基准锁死高度，多出来的内容在卡片内滚动
     if (tab === 'home' && view.configured) equalizeHome()
@@ -560,7 +570,6 @@
         }
         a.onerror = () => a.remove()
         document.head.appendChild(a)
-        if (tab === 'market') refreshMarketList()
         if (tab === 'market') render()
       }
       s.onerror = () => s.remove()
@@ -871,10 +880,25 @@
     if (count) {
       const at = syncedAt()
       count.textContent = list.length + ' 个模型' + (at ? ' · 同步 ' + at : '')
-      count.title = at ? '目录每分钟从站点同步一次' : '目录来自插件写入的本地快照'
+      count.title = at ? '插件运行时每 5 分钟拉取目录，页面每分钟重载快照' : '目录来自插件写入的本地快照'
     }
     box.className = 'model-grid' + (marketLayout === 'list' ? ' as-list' : '')
     box.replaceChildren(...(list.length ? list.map(modelCard) : [el('p', { class: 'note', text: '没有符合条件的模型。' })]))
+  }
+
+  /** 筛选与工具条原位更新，保留侧栏节点、滚动位置及键盘焦点。 */
+  function refreshMarketView() {
+    const states = { mode: marketMode, unit: marketUnit, sort: marketSort, layout: marketLayout }
+    document.querySelectorAll('.market [data-market-group], .market [data-market-kind], .market [data-market-vendor], .market [data-market-setting]').forEach((button) => {
+      const d = button.dataset
+      const on = d.marketGroup !== undefined ? marketGroup === d.marketGroup
+        : d.marketKind !== undefined ? marketKind === d.marketKind
+        : d.marketVendor !== undefined ? marketVendors.has(d.marketVendor)
+        : states[d.marketSetting] === d.marketValue
+      button.classList.toggle('on', on)
+      button.setAttribute('aria-pressed', String(on))
+    })
+    refreshMarketList()
   }
 
   /** marketCard 是广场整页：顶部工具条 + 左筛选 + 右卡片网格。 */
@@ -912,9 +936,10 @@
       value: marketQuery,
       oninput: (e) => { marketQuery = e.target.value; refreshMarketList() },
     })
-    const seg = (items, cur, onPick) => el('div', { class: 'market-seg' },
+    const seg = (items, cur, onPick, setting) => el('div', { class: 'market-seg' },
       items.map(([k, label]) => el('button', {
-        'aria-pressed': String(cur === k), onclick: () => { onPick(k); render() },
+        'data-market-setting': setting, 'data-market-value': k,
+        'aria-pressed': String(cur === k), onclick: () => { onPick(k); refreshMarketView() },
       }, label)))
     const total = p?.models?.length || 0
     const allOn = disabledModels.size === 0
@@ -929,17 +954,18 @@
           'aria-pressed': String(allOff), class: allOff ? 'on' : '',
           title: '停用全部模型', onclick: () => setAll(false),
         }, '全不选')),
-      seg([['standard', '标准'], ['topup', '充值']], marketMode, (k) => { marketMode = k }),
-      seg([['M', '/1M'], ['K', '/1K']], marketUnit, (k) => { marketUnit = k }),
+      seg([['standard', '标准'], ['topup', '充值']], marketMode, (k) => { marketMode = k }, 'mode'),
+      seg([['M', '/1M'], ['K', '/1K']], marketUnit, (k) => { marketUnit = k }, 'unit'),
       el('button', {
         class: 'market-tool' + (marketSort === 'latest' ? ' on' : ''),
         'aria-pressed': String(marketSort === 'latest'),
+        'data-market-setting': 'sort', 'data-market-value': 'latest',
         title: '按模型版本号降序（站点暂无上架时间字段）',
-        onclick: () => { marketSort = marketSort === 'latest' ? 'default' : 'latest'; render() },
+        onclick: () => { marketSort = marketSort === 'latest' ? 'default' : 'latest'; refreshMarketView() },
       }, '↑ 最新版本'),
       el('div', { class: 'market-seg' },
-        el('button', { 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; render() } }, '▦'),
-        el('button', { 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; render() } }, '☰')))
+        el('button', { 'data-market-setting': 'layout', 'data-market-value': 'grid', 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; refreshMarketView() } }, '▦'),
+        el('button', { 'data-market-setting': 'layout', 'data-market-value': 'list', 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; refreshMarketView() } }, '☰')))
     // 价格档在前、功能档在后；这是列表里的「往上」，不是标签内前后权重
     const llmBands = BAND_ORDER.map((name) => ({
       name, tone: name === '低价' ? 'low' : '',
@@ -954,8 +980,8 @@
       const ratio = Number(p.groups[g]) || 0
       return el('button', {
         class: 'market-chip' + (marketGroup === g ? ' on' : ''),
-        title: '按这个分组筛选',
-        onclick: () => { marketGroup = marketGroup === g ? '' : g; render() },
+        title: '按这个分组筛选', 'data-market-group': g, 'aria-pressed': String(marketGroup === g),
+        onclick: () => { marketGroup = marketGroup === g ? '' : g; refreshMarketView() },
       }, groupBadge(g), ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null)
     }
     const bandEl = (b) => el('div', { class: 'chip-group' },
@@ -963,7 +989,7 @@
       el('div', { class: 'market-chips' }, b.items.map(chipOf)))
     const groupChips = el('div', { class: 'market-chips' },
       el('button', {
-        class: 'market-chip' + (!marketGroup ? ' on' : ''), onclick: () => { marketGroup = ''; render() },
+        class: 'market-chip' + (!marketGroup ? ' on' : ''), 'data-market-group': '', 'aria-pressed': String(!marketGroup), onclick: () => { marketGroup = ''; refreshMarketView() },
       }, '所有分组'),
       // 鸡蛋🥚 永远第一档
       el('div', { class: 'chip-group' },
@@ -976,22 +1002,24 @@
     const kinds = el('div', { class: 'market-chips chips-row' },
       MARKET_KINDS.map(([k, label]) => el('button', {
         class: 'market-chip' + (marketKind === k ? ' on' : ''),
-        onclick: () => { marketKind = k; render() },
+        'data-market-kind': k, 'aria-pressed': String(marketKind === k),
+        onclick: () => { marketKind = k; refreshMarketView() },
       }, label)))
     const vendorChips = el('div', { class: 'market-chips chips-row' },
       vendors.map((v) => el('button', {
         class: 'market-chip' + (marketVendors.has(String(v.id)) ? ' on' : ''),
+        'data-market-vendor': String(v.id), 'aria-pressed': String(marketVendors.has(String(v.id))),
         onclick: () => {
           const id = String(v.id)
           if (marketVendors.has(id)) marketVendors.delete(id)
           else marketVendors.add(id)
-          render()
+          refreshMarketView()
         },
       }, v.name)))
     const aside = el('aside', { class: 'market-aside' },
       el('div', { class: 'ma-head' },
         el('h3', { text: '筛选' }),
-        el('button', { class: 'link', onclick: () => { marketQuery = ''; marketGroup = ''; marketKind = 'all'; marketVendors.clear(); render() } }, '↺ 重置')),
+        el('button', { class: 'link', onclick: () => { marketQuery = ''; marketGroup = ''; marketKind = 'all'; marketVendors.clear(); search.value = ''; refreshMarketView() } }, '↺ 重置')),
       el('p', { class: 'note', text: '按供应商、分组、类型和标签细化搜索模型。' }),
       el('h4', { text: '分组' }), groupChips,
       el('h4', { text: '类型' }), kinds,
@@ -1008,8 +1036,7 @@
     const wrap = el('section', { class: 'market' },
       el('div', { class: 'market-top' }, search, tools),
       body)
-    // 首帧填一次列表
-    queueMicrotask(refreshMarketList)
+    // render 在挂载后同步填充列表，再恢复滚动，避免空列表导致页面高度瞬降。
     return wrap
   }
 
