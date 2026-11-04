@@ -289,6 +289,17 @@ async function stampLatest() {
   }
 }
 
+/**
+ * scheduleCatalogSync 后台定时刷新目录快照，一个进程只起一个定时器。
+ * 拉全量（不带禁用参数）写 page/pricing.js，禁用状态由页面自己管。
+ */
+let catalogTimer = null
+function scheduleCatalogSync() {
+  if (catalogTimer) return
+  catalogTimer = setInterval(() => { catalog(new Set(), new Set()).catch(() => {}) }, 5 * 60 * 1000)
+  if (typeof catalogTimer.unref === 'function') catalogTimer.unref()
+}
+
 export default async function neartoken(input, options) {
   // 页面写进来的开关：关掉的分组，以及关掉的模型。
   // 走 magpie 的 plugin options（页面 magpie.options.set），不碰宿主代码。
@@ -307,6 +318,9 @@ export default async function neartoken(input, options) {
   }
   const disabledGroups = asSet(options?.disabledGroups)
   const disabledModels = asSet(options?.disabledModels)
+  // 后台每 5 分钟把 /api/pricing 再拉一遍写回 page/pricing.js，
+  // 页面每分钟重载该文件——模型清单与分组就跟着站点实时同步。
+  scheduleCatalogSync()
   return {
     auth: {
       provider: PROVIDER_ID,

@@ -116,6 +116,7 @@
     // 预览用：?tab=market 可直接落在某个视角，生产里没这个参数就是原本界面
     const want = new URLSearchParams(location.search).get('tab')
     if (want === 'market' || want === 'logs' || want === 'home') tab = want
+    startPriceSync()
     if (!bridge || typeof bridge.call !== 'function') {
       fail('这个 magpie 还没有插件页的调用通道。')
       return
@@ -199,7 +200,7 @@
       if (tab === 'market') frag.append(marketCard())
       else if (tab === 'logs') frag.append(logsCard())
       else frag.append(el('div', { class: 'home-grid' },
-        accountCard(), boardCard(), topupCard(), providerCard(), referralCard()))
+        accountCard(), boardCard(), topupCard(), referralCard()))
     } else {
       setStatus('未连接')
       frag.append(connectCard())
@@ -387,13 +388,14 @@
    */
   function topupCard() {
     const info = topupInfo
-    if (!info) return card(null, el('p', { class: 'note', text: '正在读取充值档位…' }))
-    if (info.unavailable) return card(null, el('p', { class: 'note', text: info.unavailable }))
+    if (!info) return el('section', { class: 'card home-wide tp-wide' }, el('p', { class: 'note', text: '正在读取充值档位…' }))
+    if (info.unavailable) return el('section', { class: 'card home-wide tp-wide' }, el('p', { class: 'note', text: info.unavailable }))
     const options = Array.isArray(info.options) && info.options.length ? info.options : []
     const methods = Array.isArray(info.methods) ? info.methods : []
     const cur = info.currency || '￥'
     const amount = pick.amount || Number(pick.custom || 0)
-    const method = pick.method || (methods[0] && methods[0].type) || ''
+    const method = (pick.method && methods.some((m) => m.type === pick.method && m.type === 'alipay')) ? pick.method
+      : (methods.find((m) => m.type === 'alipay')?.type || '')
     const payable = (v) => v >= 500 ? Math.round(v * 0.96) : v >= 200 ? Math.round(v * 0.98) : v
     const saved = (v) => v - payable(v)
     const head = el('div', { class: 'tp-head' },
@@ -428,13 +430,17 @@
     const payMethods = el('div', null,
       el('div', { class: 'tp-label', text: '付款方式' }),
       el('div', { class: 'tp-methods' }, methods.map((m) => {
-        const on = m.type === method
+        // 站点当前只有支付宝可用；其余支付方式置灰并标明，不给点也不给选
+        const usable = m.type === 'alipay'
+        const on = usable && m.type === method
         return el('button', {
-          class: 'tp-method' + (on ? ' on' : ''), 'aria-pressed': String(on),
-          onclick: () => { pick.method = m.type; render() },
+          class: 'tp-method' + (on ? ' on' : '') + (usable ? '' : ' tp-off-method'),
+          'aria-pressed': String(on), disabled: !usable,
+          title: usable ? m.name : '暂无此支付方式',
+          onclick: usable ? () => { pick.method = m.type; render() } : null,
         },
           el('span', { class: 'tp-micon ' + (m.type === 'alipay' ? 'ali' : 'wx'), text: m.type === 'alipay' ? '支' : '微' }),
-          el('b', { text: m.name }))
+          el('b', { text: usable ? m.name : m.name + ' · 暂无此支付方式' }))
       })),
       el('p', { class: 'note', text: '其他支付方式请联系站长', style: 'margin:6px 0 0' }))
     const redeem = el('div', { class: 'tp-redeem' },
@@ -446,7 +452,12 @@
         }),
         el('button', { class: 'ghost', onclick: () => showNotice('兑换额度需要宿主提供兑换端点，可在站点钱包页兑换。') }, '兑换额度')))
     const foot = el('p', { class: 'note', text: '付完 5 分钟内余额会自动刷新；订单与发票在站点的钱包页。' })
-    return card(null, head, tiles, custom, payMethods, redeem, foot)
+    // 跨整行的大卡：左栏金额，右栏付款方式与兑换码，高度按内容自然展开
+    const body = el('div', { class: 'tp-body' },
+      el('div', { class: 'tp-col' },
+        el('div', { class: 'tp-label', text: '金额' }), tiles, custom),
+      el('div', { class: 'tp-col' }, payMethods, redeem))
+    return el('section', { class: 'card home-wide tp-wide' }, head, body, foot)
   }
 
   /**
@@ -504,15 +515,105 @@
     return p && Array.isArray(p.models) && p.models.length ? p : null
   }
 
-  /** marketKindOf 与 index.mjs 的分类同源：按站点端点判，不猜名字。 */
+  /**
+   * startPriceSync 每分钟把插件写出后的新快照重新引入一次，
+   * 模型列表与分组跟着站点实时同步（禁用状态、筛选都保留）。
+   */
+  let priceTimer = null
+  function startPriceSync() {
+    if (priceTimer) return
+    priceTimer = setInterval(() => {
+      const prev = document.querySelector('script[data-nt-price]')
+      const s = document.createElement('script')
+      s.src = 'pricing.js?t=' + Date.now()
+      s.dataset.ntPrice = '1'
+      s.onload = () => {
+        if (prev && prev !== s) prev.remove()
+        if (tab === 'market') refreshMarketList()
+        if (tab === 'market') render()
+      }
+      s.onerror = () => s.remove()
+      document.head.appendChild(s)
+    }, 60000)
+  }
+
+  /** syncedAt 把快照时间格式化成 HH:MM，给工具条显示。 */
+  function syncedAt() {
+    const at = Number(pricing()?.at) || 0
+    if (!at) return ''
+    const d = new Date(at)
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+  }
+
+  /** marketKindOf 按站点端点判类型，端点没标时用模型名/tags 兜底。 */
   function marketKindOf(m) {
     const ends = m?.supported_endpoint_types || []
-    const text = [m?.name, (m?.enable_groups || []).join(' '), m?.description].join(' ').toLowerCase()
+    const tags = String(m?.tags || '')
+    const name = String(m?.name || '')
+    const text = tags + ' ' + name
     if (ends.includes('image-generation')) return 'image'
-    if (ends.includes('openai-video') || /(^|[-_])video([-_]|$)|veo|seedance|sora|kling/i.test(text)) return 'video'
-    if (/tts|text-to-speech|asr|speech|whisper|suno|audio|语音|转文字/i.test(text)) return 'audio'
-    if (/embedding|embed|rerank|向量/i.test(text)) return 'embedding'
+    if (ends.includes('openai-video') || /video/i.test(tags) || /^(veo|sd2|omni|seedance|minimax-h3|kling|sora|vidu|hailuo)/i.test(name)) return 'video'
+    if (/tts|asr|speech|audio|music|sound|lyrics|stems|transcribe|whisper|suno|语音|合成|转文字/i.test(text)) return 'audio'
+    if (/embedding|embed|vector|向量/i.test(text)) return 'embedding'
     return 'chat'
+  }
+
+  /** 鸡蛋🥚 是被置顶的特殊分组：站点发了就自动纳入，没发就显示暂无。 */
+  const isEgg = (g) => /鸡蛋|🥚|egg/i.test(String(g || ''))
+
+  /** groupModels 是某个分组下实际挂的模型，来自实时快照（不是写死的名单）。 */
+  function groupModels(name) {
+    const models = pricing()?.models || []
+    return models.filter((m) => (m.enable_groups || []).includes(name))
+  }
+
+  /**
+   * groupKind 用分组下的具体模型推功能类别：
+   * 多数是生图端点就归「图片」，视频端点归「视频」，依此类推。
+   * 这样站点新增分组/模型时归类跟着快照变，不会留成悬空的分组。
+   * 分组下暂时没有模型时，才回退到组名关键词。
+   */
+  function groupKind(name) {
+    const ms = groupModels(name)
+    if (!ms.length) {
+      const raw = String(name || '')
+      if (/生图|图片|image/i.test(raw)) return 'image'
+      if (/视频|video/i.test(raw)) return 'video'
+      if (/语音|TTS|ASR|音频/i.test(raw)) return 'audio'
+      if (/向量|embedding/i.test(raw)) return 'embedding'
+      return 'chat'
+    }
+    const votes = { image: 0, video: 0, audio: 0, embedding: 0, chat: 0 }
+    for (const m of ms) votes[marketKindOf(m)] = (votes[marketKindOf(m)] || 0) + 1
+    const kinds = ['image', 'video', 'audio', 'embedding']
+    let best = 'chat', bestN = votes.chat
+    for (const k of kinds) if (votes[k] > bestN) { best = k; bestN = votes[k] }
+    return best
+  }
+
+  /** 系列顺序：Claude → GPT → Gemini → Grok → Kimi → GLM → Qwen → DeepSeek → 其他。 */
+  const SERIES_ORDER = ['Claude', 'GPT', 'Gemini', 'Grok', 'Kimi', 'GLM', 'Qwen', 'DeepSeek', '其他']
+  const KIND_SERIES = { image: '图片', video: '视频', audio: '音频', embedding: '向量' }
+
+  /** 用 vendors 表的名称认系列（实时快照，id 变了也跟得上），名称没命中再看模型名。 */
+  const VENDOR_WORDS = [
+    ['Claude', /anthropic|claude/i], ['GPT', /openai|gpt/i], ['Gemini', /google|gemini/i],
+    ['Grok', /xai|grok/i], ['Kimi', /moonshot|kimi/i], ['GLM', /智谱|zhipu|glm/i],
+    ['Qwen', /阿里巴巴|alibaba|qwen|通义/i], ['DeepSeek', /deepseek/i],
+  ]
+  function seriesOfModel(m) {
+    const v = (pricing()?.vendors || []).find((x) => String(x.id) === String(m.vendor_id))
+    const text = (v?.name || '') + ' ' + String(m.name || '')
+    for (const [s, re] of VENDOR_WORDS) if (re.test(text)) return s
+    return '其他'
+  }
+
+  /** modelRank 返回模型该排在哪一档：先 LLM 系列，再功能模型，全部来自实时数据。 */
+  function modelRank(m) {
+    const kind = marketKindOf(m)
+    if (kind !== 'chat') return { tier: 1, order: ['image', 'video', 'audio', 'embedding'].indexOf(kind), kind }
+    const s = seriesOfModel(m)
+    return { tier: 0, order: SERIES_ORDER.indexOf(s) === -1 ? 99 : SERIES_ORDER.indexOf(s), kind }
   }
 
   function vendorOf(id) {
@@ -520,14 +621,7 @@
     return v ? v.name : '其他'
   }
 
-  /** 第一级：模型功能。第二级：价格与品质（低价 / 满血 / 备用 / 官Key …）。 */
-  const FUNC_TAGS = [
-    ['生图', /生图|图片|image|GPT Image|Gemini.*Image/i],
-    ['视频', /视频|video|Veo|Seedance|Suno|即梦/i],
-    ['语音', /语音|TTS|ASR|转文字|合成/i],
-    ['向量', /向量|embedding|embed/i],
-    ['对话', /.*/],
-  ]
+  /** 第一级：模型功能（由分组下实际模型端点推导，不靠组名猜）。第二级：价格与品质。 */
   const PRICE_TAGS = ['低价', '满血', '促销', '备用', '官Key', '官key', '国模', '自有', '反重力', '神秘折扣', 'CC', 'Kiro', '灵车', 'Argon', 'GPT Pro', 'Claude', 'DeepSeek', 'GLM', 'Gemini', 'Kimi', 'GPT', 'Suno', 'AIS']
 
   /** 第二级里的首标签次序：满血 > 官Key > 低价 > 其他。满血排在低价前面。 */
@@ -543,12 +637,11 @@
     const parts = (raw.match(/\[[^\]]+\]/g) || []).map((p) => p.slice(1, -1))
     const rest = raw.replace(/\[[^\]]+\]/g, '').trim()
     const all = parts.concat(rest ? [rest] : []).join(' ')
-    let func = '对话'
-    for (const [label, re] of FUNC_TAGS) { if (re.test(all)) { func = label; break } }
-    // 官Key / 官key 走官方通道，自动补一个「满血」标签
-    const official = /官Key|官key/i.test(all)
+    // 功能标签按分组下实际模型的端点推导；站点改目录后自动跟着变
+    const func = KIND_SERIES[groupKind(name)] || '对话'
+    // 官Key 是独立档位，标签里不再挂「满血」（[满血][官Key] → 官Key）
     let price = parts.filter((p) => PRICE_TAGS.some((k) => p.toLowerCase().includes(k.toLowerCase())))
-    if (official && !price.some((p) => p.includes('满血'))) price = ['满血'].concat(price)
+    if (/官Key|官key/i.test(all)) price = price.filter((p) => !/满血/.test(p))
     price.sort((a, b) => leadRank(a) - leadRank(b))
     return { func, price, rest, lead: price[0] || '' }
   }
@@ -556,7 +649,7 @@
   /** groupBadge 按「功能 → 价格」两级重绘；首标签单独加 .lead 作视觉区分。 */
   function groupBadge(name) {
     const t = groupTags(name)
-    const tone = { '生图': 'pink', '视频': 'blue', '语音': 'purple', '向量': 'teal', '对话': 'plain' }
+    const tone = { '图片': 'pink', '视频': 'blue', '音频': 'purple', '向量': 'teal', '对话': 'plain' }
     const colorOf = (w) => {
       if (/满血|原生|特惠/i.test(w)) return 'red'
       if (/低价|反重力|神秘|自有|国模/i.test(w)) return 'green'
@@ -610,7 +703,17 @@
   function modelCard(m) {
     const p = priceOf(m)
     const ends = (m?.supported_endpoint_types || []).join(', ')
-    const groups = m?.enable_groups || []
+    // 卡片上的分组标签按「低价 → 官Key → 满血 → 功能」的档位顺序排
+    const groups = (m?.enable_groups || []).slice().sort((a, b) => {
+      const rank = (g) => {
+        if (/官Key|官key/.test(g)) return 1
+        if (/低价/.test(g)) return 0
+        if (/满血/.test(g)) return 2
+        const k = groupKind(g)
+        return k === 'chat' ? 3 : 4 + ['image', 'video', 'audio', 'embedding'].indexOf(k)
+      }
+      return rank(a) - rank(b) || a.localeCompare(b, 'zh')
+    })
     const shownGroups = groups.slice(0, 2)
     const more = groups.length - shownGroups.length
     const kind = marketKindOf(m)
@@ -663,38 +766,18 @@
         el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '详情 ›')))
   }
 
-  /**
-   * 模型按系列归类：DeepSeek → GLM → Kimi → Qwen → GPT → Claude → Gemini
-   * → Grok → 生图 → 视频 → 语音 → 向量 → 其他。同系列挨在一起。
-   */
-  const SERIES = [
-    ['DeepSeek', /deepseek|ds-|kimseek/i],
-    ['GLM', /glm|智谱/i],
-    ['Kimi', /kimi|moonshot/i],
-    ['Qwen', /qwen|通义/i],
-    ['GPT', /gpt-|o[134]-|codex|sora/i],
-    ['Claude', /claude/i],
-    ['Gemini', /gemini/i],
-    ['Grok', /grok/i],
-    ['生图', /banana|seedream|flux|image|ideogram|z-image|qwen-image|dall/i],
-    ['视频', /veo|sd2|omni|seedance|minimax-h3|video|kling|sora/i],
-    ['语音', /tts|asr|suno|whisper|speech|lyrics|sound/i],
-    ['向量', /embedding|embed/i],
-  ]
-  function modelSeriesOf(name) {
-    const n = String(name || '').toLowerCase()
-    const i = SERIES.findIndex(([, re]) => re.test(n))
-    return i === -1 ? SERIES.length : i
-  }
-
   /** filteredModels 把搜索、分组、类型、厂商筛选叠起来。 */
   function filteredModels() {
     const p = pricing()
     if (!p) return []
     let list = p.models.slice()
     if (marketSort !== 'latest') {
-      // 默认按系列归类（ds → glm → kimi → …），同系列内按名字排
-      list.sort((a, b) => modelSeriesOf(a.name) - modelSeriesOf(b.name) || a.name.localeCompare(b.name))
+      // 按实时数据归类：LLM 走 vendor 系列（Claude→GPT→Gemini→Grok→Kimi→GLM→DS→Qwen），
+      // 功能模型排在后面按 图片→视频→音频→向量。不用模型名正则，快照更新即跟随。
+      list.sort((a, b) => {
+        const ra = modelRank(a), rb = modelRank(b)
+        return ra.tier - rb.tier || ra.order - rb.order || a.name.localeCompare(b.name)
+      })
     }
     if (marketGroup) list = list.filter((m) => (m.enable_groups || []).includes(marketGroup))
     if (marketKind !== 'all') list = list.filter((m) => marketKindOf(m) === marketKind)
@@ -712,7 +795,11 @@
     const count = $('market-count')
     if (!box) return
     const list = filteredModels()
-    if (count) count.textContent = list.length + ' 个模型'
+    if (count) {
+      const at = syncedAt()
+      count.textContent = list.length + ' 个模型' + (at ? ' · 同步 ' + at : '')
+      count.title = at ? '目录每分钟从站点同步一次' : '目录来自插件写入的本地快照'
+    }
     box.className = 'model-grid' + (marketLayout === 'list' ? ' as-list' : '')
     box.replaceChildren(...(list.length ? list.map(modelCard) : [el('p', { class: 'note', text: '没有符合条件的模型。' })]))
   }
@@ -720,17 +807,32 @@
   /** marketCard 是广场整页：顶部工具条 + 左筛选 + 右卡片网格。 */
   function marketCard() {
     const p = pricing()
-    // 先按功能分栏，栏内按首标签（满血 → 官Key → 低价 → …）再按倍率排
-    const FUNC_ORDER = ['对话', '生图', '视频', '语音', '向量']
-    // 分组栏：低价分组整体排上面（是列表里的上下位置，不是标签内前后权重），
-    // 其余按倍率升序。标签内部仍按「功能 → 满血/官Key → 低价」重绘。
-    const isLow = (g) => /低价/i.test(g)
-    const rankOf = (g) => {
-      const t = groupTags(g)
-      const f = FUNC_ORDER.indexOf(t.func)
-      return (isLow(g) ? 0 : 1) * 10000 + (f === -1 ? 99 : f) * 100 + (Number(p.groups[g]) || 0)
+    // 分组栏两条线，互不混：
+    //   LLM（分组下的模型以对话端点为主）→ 价格档：低价 → 满血 → 官Key → 其他
+    //   非 LLM（生图/视频/音频/向量端点为主）→ 功能档：图片 → 视频 → 音频 → 向量
+    // 类别由 groupKind 按实际模型投票得出，站点更新目录后自动跟着变。
+    // 归类时「满血」优先：带满血标签的组一律划到下面的满血档，
+    // 不被 /低价/ 抢走，避免低价栏里混着满血组。
+    const bandOf = (g) => {
+      if (isEgg(g)) return 'egg'
+      if (/官Key|官key/.test(g)) return '官Key'   // 官Key 独立档，含 [满血][官Key]
+      if (/满血/.test(g)) return '满血'           // 其余带满血的划到下面
+      if (/低价/.test(g)) return '低价'
+      return '其他'
     }
-    const groups = Object.keys(p?.groups || {}).sort((a, b) => rankOf(a) - rankOf(b) || a.localeCompare(b, 'zh'))
+    // 官Key 单独一档提到前面；低价在上，满血在下面；鸡蛋🥚 永远置顶
+    const BAND_ORDER = ['低价', '官Key', '满血', '其他']
+    const FUNC_BANDS = [['image', '图片'], ['video', '视频'], ['audio', '音频'], ['embedding', '向量']]
+    const allGroups = Object.keys(p?.groups || {})
+    const byRatio = (a, b) => (Number(p.groups[a]) || 0) - (Number(p.groups[b]) || 0) || a.localeCompare(b, 'zh')
+    // 空分组也按名字归到对应档（如 [低价][满血] Gemini Ultra 属满血），
+    // 不另设「暂无模型」档，避免把满血组丢到最后。
+    const llmGroups = allGroups.filter((g) => groupKind(g) === 'chat')
+    const funcGroups = allGroups.filter((g) => groupKind(g) !== 'chat')
+    // 鸡蛋🥚 置顶：站点有就给，没有就置一个「暂无」
+    const eggGroups = allGroups.filter(isEgg)
+    llmGroups.splice(0, llmGroups.length, ...llmGroups.filter((g) => !isEgg(g)))
+    funcGroups.splice(0, funcGroups.length, ...funcGroups.filter((g) => !isEgg(g)))
     const vendors = (p?.vendors || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'))
     const search = el('input', {
       class: 'market-search', type: 'search', placeholder: '搜索模型名称、供应商、端点或标签...',
@@ -760,15 +862,15 @@
       el('div', { class: 'market-seg' },
         el('button', { 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; refreshMarketList() } }, '▦'),
         el('button', { 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; refreshMarketList() } }, '☰')))
-    // 分组栏两级：低价分组整体排最上面，其余按功能分栏
-    const lowGroups = groups.filter(isLow)
-    const otherGroups = groups.filter((g) => !isLow(g))
-    const byFunc = new Map()
-    for (const g of otherGroups) {
-      const f = groupTags(g).func
-      if (!byFunc.has(f)) byFunc.set(f, [])
-      byFunc.get(f).push(g)
-    }
+    // 价格档在前、功能档在后；这是列表里的「往上」，不是标签内前后权重
+    const llmBands = BAND_ORDER.map((name) => ({
+      name, tone: name === '低价' ? 'low' : '',
+      items: llmGroups.filter((g) => bandOf(g) === name).sort(byRatio),
+    })).filter((b) => b.items.length)
+    const funcBands = FUNC_BANDS.map(([kind, label]) => ({
+      name: label, tone: 'func',
+      items: funcGroups.filter((g) => groupKind(g) === kind).sort(byRatio),
+    })).filter((b) => b.items.length)
     const chipOf = (g) => {
       const ratio = Number(p.groups[g]) || 0
       return el('button', {
@@ -777,16 +879,20 @@
         onclick: () => { marketGroup = marketGroup === g ? '' : g; render() },
       }, groupBadge(g), ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null)
     }
+    const bandEl = (b) => el('div', { class: 'chip-group' },
+      el('div', { class: 'chip-group-name ' + b.tone, text: b.name }),
+      el('div', { class: 'market-chips' }, b.items.map(chipOf)))
     const groupChips = el('div', { class: 'market-chips' },
       el('button', {
         class: 'market-chip' + (!marketGroup ? ' on' : ''), onclick: () => { marketGroup = ''; render() },
       }, '所有分组'),
-      lowGroups.length ? el('div', { class: 'chip-group' },
-        el('div', { class: 'chip-group-name low', text: '低价' }),
-        el('div', { class: 'market-chips' }, lowGroups.map(chipOf))) : null,
-      FUNC_ORDER.filter((f) => byFunc.has(f)).map((f) => el('div', { class: 'chip-group' },
-        el('div', { class: 'chip-group-name', text: f }),
-        el('div', { class: 'market-chips' }, byFunc.get(f).map(chipOf)))))
+      // 鸡蛋🥚 永远第一档
+      el('div', { class: 'chip-group' },
+        el('div', { class: 'chip-group-name egg', text: '鸡蛋🥚' }),
+        el('div', { class: 'market-chips' }, eggGroups.length
+          ? eggGroups.map(chipOf)
+          : [el('span', { class: 'market-chip none', text: '暂无' })])),
+      llmBands.map(bandEl), funcBands.map(bandEl))
     const kinds = el('div', { class: 'market-chips' },
       MARKET_KINDS.map(([k, label]) => el('button', {
         class: 'market-chip' + (marketKind === k ? ' on' : ''),
@@ -814,7 +920,7 @@
     const body = el('div', { class: 'market-body' },
       aside,
       el('div', { class: 'market-main' },
-        el('div', { class: 'market-count', id: 'market-count', text: (p?.models?.length || 0) + ' 个模型' }),
+        el('div', { class: 'market-count', id: 'market-count', text: (p?.models?.length || 0) + ' 个模型' + (syncedAt() ? ' · 同步 ' + syncedAt() : '') }),
         el('div', { class: 'model-grid', id: 'market-list' }),
         el('p', { class: 'note', text: off
           ? '已停用 ' + off + ' 个模型：它们不会进 magpie 的模型清单。点卡片可重新启用，或按「全选」。'
@@ -961,18 +1067,6 @@
     return String(Math.round(v * 10000) / 10000)
   }
 
-  /** 供应商卡：说明模型已经交给 magpie 了。 */
-  function providerCard() {
-    const models = view.models || 0
-    const groups = view.groups || 0
-    return card('模型与供应商',
-      el('dl', { class: 'facts' },
-        el('div', null, el('dt', { text: '供应商' }), el('dd', { text: 'NearToken（已接入）' })),
-        el('div', null, el('dt', { text: '可用模型' }), el('dd', { text: models ? models + ' 个' : '尚未读到目录' })),
-        el('div', null, el('dt', { text: '计费分组' }), el('dd', { text: groups ? groups + ' 个' : '—' })),
-        el('div', null, el('dt', { text: '令牌名' }), el('dd', { text: view.tokenName || '—' }))),
-      el('p', { class: 'note', text: '模型选择、路由与失败切换都在 magpie 的供应商页里，和别的供应商一样；这里不重复一套。' }))
-  }
 
   // ---------- 交互 ----------
 
