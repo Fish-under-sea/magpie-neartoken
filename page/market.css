@@ -50,6 +50,8 @@
 .ma-head .link { border: 0; background: transparent; padding: 0; }
 
 .market-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+/* 左侧筛选栏一律竖排：每个分组/chip 占一行，从上往下读 */
+.market-aside .market-chips { flex-direction: column; flex-wrap: nowrap; gap: 6px; align-items: flex-start; }
 
 .market-chip-wrap { position: relative; display: inline-flex; align-items: center; }
 .market-chip {
@@ -80,7 +82,7 @@
 .market-count { font-size: 13px; font-weight: 600; margin: 2px 0 10px; }
 .market-main > .note { margin-top: 10px; }
 
-.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 10px; }
+.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(292px, 1fr)); gap: 10px; align-items: stretch; }
 .model-grid.as-list { grid-template-columns: 1fr; }
 
 .mc {

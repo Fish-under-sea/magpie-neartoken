@@ -122,6 +122,33 @@ function kindOf(row) {
   return 'chat'
 }
 
+/** 系列顺序：供应商列表按它排（Claude→GPT→Gemini→Grok→Kimi→GLM→Qwen→DeepSeek）。 */
+const SERIES_WORDS = [
+  ['Claude', /anthropic|claude/i],
+  ['GPT', /openai|gpt/i],
+  ['Gemini', /google|gemini/i],
+  ['Grok', /xai|grok/i],
+  ['Kimi', /moonshot|kimi/i],
+  ['GLM', /智谱|zhipu|glm/i],
+  ['Qwen', /阿里巴巴|alibaba|qwen|通义/i],
+  ['DeepSeek', /deepseek|kimseek|ds-/i],
+]
+const SERIES_ORDER = ['Claude', 'GPT', 'Gemini', 'Grok', 'Kimi', 'GLM', 'Qwen', 'DeepSeek', '其他']
+
+/** kindRank：对话在前，功能模型（图片→视频→音频→向量）在后。 */
+function kindRank(row) {
+  const k = kindOf(row)
+  return k === 'chat' ? 0 : 1 + ['image', 'video', 'audio', 'embedding'].indexOf(k)
+}
+
+/** seriesRank：按 vendors 表名称 + 模型名认系列，没命中落「其他」。 */
+function seriesRank(row, vendors) {
+  const v = (vendors || []).find((x) => String(x.id) === String(row?.vendor_id))
+  const text = (v?.name || '') + ' ' + String(row?.model_name || '')
+  for (let i = 0; i < SERIES_WORDS.length; i++) if (SERIES_WORDS[i][1].test(text)) return i
+  return SERIES_ORDER.length - 1
+}
+
 /** kindOutput 是 magpie 的 capabilities.output：分区靠它认。 */
 function kindOutput(kind) {
   switch (kind) {
@@ -146,10 +173,18 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set()) {
   const rows = Array.isArray(env?.data) ? env.data : []
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
   const ratios = env?.group_ratio && typeof env.group_ratio === 'object' ? env.group_ratio : {}
+  const vendors = Array.isArray(env?.vendors) ? env.vendors : []
   // 完整快照给模型广场：页面按它一比一重绘站点 /pricing
   writePricing(env)
+  // 供应商列表的模型顺序：LLM 按系列 Claude→GPT→Gemini→Grok→Kimi→GLM→Qwen→DeepSeek，
+  // 功能模型排在后面（图片→视频→音频→向量）。用 vendors 表名称 + 端点实时推导。
+  const ordered = rows.slice().sort((a, b) => {
+    const ka = kindRank(a), kb = kindRank(b)
+    return ka - kb || seriesRank(a, vendors) - seriesRank(b, vendors)
+      || String(a?.model_name || '').localeCompare(String(b?.model_name || ''))
+  })
   const out = {}
-  for (const row of rows) {
+  for (const row of ordered) {
     const model = String(row?.model_name ?? '').trim()
     if (!model || disabledModels.has(model)) continue
     const kind = kindOf(row)

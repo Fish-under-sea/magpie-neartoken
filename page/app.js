@@ -599,13 +599,35 @@
   const VENDOR_WORDS = [
     ['Claude', /anthropic|claude/i], ['GPT', /openai|gpt/i], ['Gemini', /google|gemini/i],
     ['Grok', /xai|grok/i], ['Kimi', /moonshot|kimi/i], ['GLM', /智谱|zhipu|glm/i],
-    ['Qwen', /阿里巴巴|alibaba|qwen|通义/i], ['DeepSeek', /deepseek/i],
+    ['Qwen', /阿里巴巴|alibaba|qwen|通义/i], ['DeepSeek', /deepseek|kimseek|ds-/i],
   ]
   function seriesOfModel(m) {
     const v = (pricing()?.vendors || []).find((x) => String(x.id) === String(m.vendor_id))
     const text = (v?.name || '') + ' ' + String(m.name || '')
     for (const [s, re] of VENDOR_WORDS) if (re.test(text)) return s
     return '其他'
+  }
+
+  /**
+   * groupSeries 用该分组下模型的系列投票，决定这个分组归到哪个系列位置。
+   * 分组档位内的 chip 就按它排（Claude → GPT → … → DS），不再按倍率乱跳。
+   */
+  function groupSeries(g) {
+    const ms = groupModels(g)
+    if (!ms.length) {
+      for (const [s, re] of VENDOR_WORDS) if (re.test(String(g || ''))) return s
+      return '其他'
+    }
+    const votes = {}
+    for (const m of ms) { const s = seriesOfModel(m); votes[s] = (votes[s] || 0) + 1 }
+    let best = '其他', bn = votes['其他'] || 0
+    for (const s of SERIES_ORDER) if ((votes[s] || 0) > bn) { best = s; bn = votes[s] }
+    return best
+  }
+  const seriesIdx = (g) => {
+    if (/国模/.test(String(g || ''))) return 999   // 国模固定排在该档最后
+    const i = SERIES_ORDER.indexOf(groupSeries(g))
+    return i === -1 ? 99 : i
   }
 
   /** modelRank 返回模型该排在哪一档：先 LLM 系列，再功能模型，全部来自实时数据。 */
@@ -865,7 +887,8 @@
     // 价格档在前、功能档在后；这是列表里的「往上」，不是标签内前后权重
     const llmBands = BAND_ORDER.map((name) => ({
       name, tone: name === '低价' ? 'low' : '',
-      items: llmGroups.filter((g) => bandOf(g) === name).sort(byRatio),
+      items: llmGroups.filter((g) => bandOf(g) === name)
+        .sort((a, b) => seriesIdx(a) - seriesIdx(b) || byRatio(a, b)),
     })).filter((b) => b.items.length)
     const funcBands = FUNC_BANDS.map(([kind, label]) => ({
       name: label, tone: 'func',
