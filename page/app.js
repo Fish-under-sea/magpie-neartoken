@@ -968,7 +968,7 @@
         el('button', { 'data-market-setting': 'layout', 'data-market-value': 'list', 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; refreshMarketView() } }, '☰')))
     // 价格档在前、功能档在后；这是列表里的「往上」，不是标签内前后权重
     const llmBands = BAND_ORDER.map((name) => ({
-      name, tone: name === '低价' ? 'low' : '',
+      name, tone: { '低价': 'low', '官Key': 'official', '满血': 'full', '其他': 'other' }[name],
       items: llmGroups.filter((g) => bandOf(g) === name)
         .sort((a, b) => seriesIdx(a) - seriesIdx(b) || byRatio(a, b)),
     })).filter((b) => b.items.length)

@@ -120,12 +120,15 @@
 .gb-tag.purple { background: #7b52b8; }
 .gb-tag.teal { background: #2f8f8a; }
 .chip-group-name.low { color: #4cc38a; font-weight: 700; font-size: 11px; }
+.chip-group-name.official { color: var(--magpie-accent, #5b8def); }
+.chip-group-name.full { color: var(--magpie-red, var(--nt-rose)); }
+.chip-group-name.other { color: var(--magpie-fg-2, var(--nt-muted)); }
 .chip-group-name.func { color: #9b7ce0; font-weight: 700; font-size: 11px; }
 .chip-group-name.egg { color: #e0b34a; font-weight: 700; font-size: 11px; }
 .chip-group-name.empty { color: var(--nt-faint); font-weight: 600; font-size: 11px; }
 .market-chip.none { opacity: .45; cursor: default; pointer-events: none; }
 .chip-group { width: 100%; margin: 2px 0 4px; }
-.chip-group-name { font-size: 10px; color: var(--nt-faint); margin: 6px 0 3px; letter-spacing: .04em; }
+.chip-group-name { font-size: 11px; font-weight: 700; color: var(--nt-faint); margin: 6px 0 3px; letter-spacing: .04em; }
 
 /* 充值卡：站点「添加资金」缩小版 */
 .tp-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--nt-line); margin-bottom: 8px; }
