@@ -46,6 +46,11 @@ html, body {
    内容超出时卡片内部滚动，不把整页撑长。 */
 .home-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .home-grid > .card { margin: 0; overflow-y: auto; scrollbar-width: thin; }
+.home-grid > .card.home-wide {
+  grid-column: 1 / -1;
+  overflow: visible;                 /* 长条卡不参与等高锁死 */
+  height: auto !important;
+}
 .home-grid > .card::-webkit-scrollbar { width: 6px; }
 .home-grid > .card::-webkit-scrollbar-thumb { background: var(--nt-line); border-radius: 3px; }
 @media (max-width: 720px) { .home-grid { grid-template-columns: 1fr; } .home-grid > .card { height: auto !important; } }

@@ -1,6 +1,6 @@
 {
   "name": "@fish-under-sea/magpie-neartoken",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "NearToken for magpie: a provider whose sign-in is the site's own device authorization, models listed per billing group with their multiplier, balance and vouchers on magpie's usage card, plus a page for spending and top-ups.",
   "type": "module",
   "main": "index.mjs",

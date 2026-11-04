@@ -163,27 +163,32 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set()) {
     }
     const groups = all.filter((g) => !disabledGroups.has(String(g ?? '').trim()))
     if (!groups.length) continue
-    for (const raw of groups) {
-      const group = String(raw ?? '').trim()
-      const ref = group && refs[group] ? String(refs[group]) : ''
-      const ratio = ratioOf(ratios, group)
-      const id = ref ? `${ref}::${model}` : model
-      const label = group ? (ratio > 0 ? `${group} ${ratioText(ratio)}x` : group) + ' · ' + model : model
-      out[id] = {
-        name: label,
-        api: { id: model, url: SITE + '/v1', npm: '@ai-sdk/openai-compatible' },
-        limit: {
-          context: Number(row?.context_window) > 0 ? Number(row.context_window) : 0,
-          output: Number(row?.max_tokens) > 0 ? Number(row.max_tokens) : 0,
-        },
-        ...(ref ? { headers: { 'x-neartoken-group': ref } } : {}),
-        // 站点自己的分类，交给 magpie 的四个分区（图像/视频/语音/向量）
-        ...(kind === 'chat' ? {} : { kind }),
-        capabilities: {
-          toolcall: true,
-          output: kindOutput(kind),
-        },
-      }
+    // 一个模型只出一行：多分组不再展开成多行，否则「只启用一个模型」在
+    // 供应商列表里仍会冒出五六行同名条目。分组与倍率折进显示名里，
+    // 请求按该模型最便宜（倍率最低）的分组走。
+    const ranked = groups.map((g) => ({
+      name: String(g ?? '').trim(),
+      ref: String(g ?? '').trim() && refs[String(g ?? '').trim()] ? String(refs[String(g ?? '').trim()]) : '',
+      ratio: ratioOf(ratios, String(g ?? '').trim()),
+    })).sort((a, b) => (a.ratio || 1e9) - (b.ratio || 1e9))
+    const main = ranked[0] || { name: '', ref: '', ratio: 0 }
+    const label = main.name
+      ? (main.ratio > 0 ? `${main.name} ${ratioText(main.ratio)}x` : main.name) + ' · ' + model
+      : model
+    out[model] = {
+      name: label,
+      api: { id: model, url: SITE + '/v1', npm: '@ai-sdk/openai-compatible' },
+      limit: {
+        context: Number(row?.context_window) > 0 ? Number(row.context_window) : 0,
+        output: Number(row?.max_tokens) > 0 ? Number(row.max_tokens) : 0,
+      },
+      ...(main.ref ? { headers: { 'x-neartoken-group': main.ref } } : {}),
+      // 站点自己的分类，交给 magpie 的四个分区（图像/视频/语音/向量）
+      ...(kind === 'chat' ? {} : { kind }),
+      capabilities: {
+        toolcall: true,
+        output: kindOutput(kind),
+      },
     }
   }
   writeGroups([...groupsOut.values()].map((g) => ({

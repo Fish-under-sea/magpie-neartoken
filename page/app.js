@@ -84,6 +84,8 @@
 
   /** showError 把宿主的话放到页脚的一条提示上，不弹窗。 */
   let lastError = ''
+  let notice = ''
+  function showNotice(text) { notice = text; lastError = ''; render() }
   function showError(error) {
     const said = String(error && error.message ? error.message : error)
     // options 写入限流由 saveDisabled 自己合并重试，不用挂到页脚
@@ -197,13 +199,14 @@
       if (tab === 'market') frag.append(marketCard())
       else if (tab === 'logs') frag.append(logsCard())
       else frag.append(el('div', { class: 'home-grid' },
-        accountCard(), boardCard(), topupCard(), providerCard()))
+        accountCard(), boardCard(), topupCard(), providerCard(), referralCard()))
     } else {
       setStatus('未连接')
       frag.append(connectCard())
     }
     if (view.error) frag.append(el('p', { class: 'note bad', text: view.error }))
     if (lastError) frag.append(el('p', { class: 'note bad', text: lastError }))
+    if (notice) frag.append(el('p', { class: 'note', text: notice }))
     if (pendingAct) frag.append(el('p', { class: 'note', text: '正在处理：' + pendingAct }))
     body.replaceChildren(frag)
     if (view.pending) paintCountdown()
@@ -213,8 +216,9 @@
 
   /** equalizeHome 量第一张卡（账户）的高度，锁到同组所有卡上。 */
   function equalizeHome() {
-    const cards = document.querySelectorAll('.home-grid > .card')
+    const cards = [...document.querySelectorAll('.home-grid > .card:not(.home-wide)')]
     if (cards.length < 2) return
+    cards.forEach((c) => { c.style.height = '' })
     const h = Math.round(cards[0].getBoundingClientRect().height)
     if (!h) return
     cards.forEach((c) => { c.style.height = h + 'px' })
@@ -290,6 +294,23 @@
       el('p', { class: 'note', id: 'copy-hint', text: '' }))
   }
 
+  /** 推荐计划：站点「复制推荐链接」那一栏的长条卡，跨整行放最下面。 */
+  function referralCard() {
+    const aff = view.affCode || view.referralCode || ''
+    const url = aff ? 'https://neartoken.cc/sign-up?aff=' + encodeURIComponent(aff)
+      : 'https://neartoken.cc/console'
+    const invites = Number(view.invites) || 0
+    return el('section', { class: 'card home-wide' },
+      el('div', { class: 'rf' },
+        el('div', { class: 'rf-ico', text: '◈' }),
+        el('div', { class: 'rf-text' },
+          el('h2', { text: '推荐计划', style: 'margin:0' }),
+          el('p', { class: 'note', text: '用户通过您的推荐链接注册后，您即可获得奖励。可随时将累计奖励转入余额。', style: 'margin:2px 0 0' })),
+        el('div', { class: 'rf-invites' }, el('div', { class: 'k', text: '邀请' }), el('div', { class: 'v', text: String(invites) })),
+        el('div', { class: 'rf-link' }, el('span', { text: url })),
+        el('button', { class: 'rf-copy', title: '复制推荐链接', onclick: () => copy(url) }, '⧉')))
+  }
+
   /** 附件：账户、余额、代金券。 */
   function accountCard() {
     const account = view.account || {}
@@ -360,47 +381,72 @@
     return card(null, ...parts)
   }
 
-  /** 充值卡：档位、渠道、去支付。 */
+  /**
+   * 充值卡：站点「添加资金」页的缩小版。
+   * 金额大卡（带优惠角标）、自定义金额 + 待支付、支付方式图标卡、兑换码。
+   */
   function topupCard() {
     const info = topupInfo
-    if (!info) return card('充值', el('p', { class: 'note', text: '正在读取充值档位…' }))
-    if (info.unavailable) return card('充值', el('p', { class: 'note', text: info.unavailable }))
+    if (!info) return card(null, el('p', { class: 'note', text: '正在读取充值档位…' }))
+    if (info.unavailable) return card(null, el('p', { class: 'note', text: info.unavailable }))
     const options = Array.isArray(info.options) && info.options.length ? info.options : []
-    const amount = pick.amount
-    const method = pick.method || (info.methods[0] && info.methods[0].type) || ''
-    const parts = [
-      el('div', { class: 'topup' },
-        el('div', { class: 'row wrap' },
-          options.map((value) => el('button', {
-            'aria-pressed': String(value === amount),
-            onclick: () => { pick.amount = value; pick.custom = ''; render() },
-          }, String(value))),
-          el('label', { class: 'field' },
-            el('span', { class: 'cur', text: info.currency || '￥' }),
-            el('input', {
-              type: 'text',
-              inputmode: 'numeric',
-              placeholder: '其他',
-              value: pick.custom,
-              'aria-label': '自定义金额',
-              oninput: (e) => { pick.custom = e.target.value.replace(/[^\d]/g, ''); pick.amount = null },
-            }))),
-        el('div', { class: 'row' },
-          info.methods.length > 1
-            ? el('select', {
-              'aria-label': '收款方式',
-              onchange: (e) => { pick.method = e.target.value; render() },
-            }, info.methods.map((m) => el('option', { value: m.type, selected: m.type === method }, m.name)))
-            : el('span', { class: 'note', text: info.methods.length ? info.methods[0].name : '' }),
-          el('span', { class: 'grow' }),
-          el('button', {
-            class: 'primary',
-            disabled: !!pendingAct,
-            onclick: () => pay(method),
-          }, '去支付'))),
-      el('p', { class: 'note', text: '付完 5 分钟内余额会自动刷新；订单与发票在站点的钱包页。' }),
-    ]
-    return card('充值', ...parts)
+    const methods = Array.isArray(info.methods) ? info.methods : []
+    const cur = info.currency || '￥'
+    const amount = pick.amount || Number(pick.custom || 0)
+    const method = pick.method || (methods[0] && methods[0].type) || ''
+    const payable = (v) => v >= 500 ? Math.round(v * 0.96) : v >= 200 ? Math.round(v * 0.98) : v
+    const saved = (v) => v - payable(v)
+    const head = el('div', { class: 'tp-head' },
+      el('div', { class: 'tp-badge', text: '￥' }),
+      el('div', { class: 'grow' },
+        el('h2', { text: '添加资金', style: 'margin:0' }),
+        el('p', { class: 'note', text: '选择金额和支付方式', style: 'margin:2px 0 0' })),
+      el('a', { class: 'ghost link', href: 'https://neartoken.cc/wallet', target: '_blank', rel: 'noreferrer' }, '订单历史 ↗'),
+      el('button', { class: 'primary', disabled: !!pendingAct || !amount, onclick: () => pay(method) }, '去支付'))
+    const tiles = el('div', { class: 'tp-tiles' }, options.map((v) => {
+      const on = v === amount && !pick.custom
+      const discount = v >= 500 ? '优惠 4%' : v >= 200 ? '优惠 2%' : ''
+      return el('button', {
+        class: 'tp-tile' + (on ? ' on' : ''), 'aria-pressed': String(on),
+        onclick: () => { pick.amount = v; pick.custom = ''; render() },
+      },
+        el('b', { text: String(v) }),
+        el('span', { class: 'tp-pay', text: discount ? cur + payable(v) + ' · 节省 ' + saved(v) : cur + v }),
+        discount ? el('span', { class: 'tp-off', text: discount }) : null)
+    }))
+    const custom = el('div', { class: 'tp-custom' },
+      el('label', { class: 'tp-label', text: '自定义金额' }),
+      el('div', { class: 'tp-custom-row' },
+        el('label', { class: 'field tp-field' },
+          el('span', { class: 'cur', text: cur }),
+          el('input', {
+            type: 'text', inputmode: 'numeric', placeholder: '输入金额', value: pick.custom,
+            'aria-label': '自定义金额',
+            oninput: (e) => { pick.custom = e.target.value.replace(/[^\d]/g, ''); pick.amount = null; render() },
+          })),
+        el('div', { class: 'tp-due' }, el('span', { text: '待支付金额：' }), el('b', { text: cur + (amount || 0) }))))
+    const payMethods = el('div', null,
+      el('div', { class: 'tp-label', text: '付款方式' }),
+      el('div', { class: 'tp-methods' }, methods.map((m) => {
+        const on = m.type === method
+        return el('button', {
+          class: 'tp-method' + (on ? ' on' : ''), 'aria-pressed': String(on),
+          onclick: () => { pick.method = m.type; render() },
+        },
+          el('span', { class: 'tp-micon ' + (m.type === 'alipay' ? 'ali' : 'wx'), text: m.type === 'alipay' ? '支' : '微' }),
+          el('b', { text: m.name }))
+      })),
+      el('p', { class: 'note', text: '其他支付方式请联系站长', style: 'margin:6px 0 0' }))
+    const redeem = el('div', { class: 'tp-redeem' },
+      el('label', { class: 'tp-label', text: '🎁 有兑换码吗？' }),
+      el('div', { class: 'tp-custom-row' },
+        el('input', {
+          class: 'tp-input', type: 'text', placeholder: '输入您的兑换码',
+          oninput: (e) => { pick.redeem = e.target.value },
+        }),
+        el('button', { class: 'ghost', onclick: () => showNotice('兑换额度需要宿主提供兑换端点，可在站点钱包页兑换。') }, '兑换额度')))
+    const foot = el('p', { class: 'note', text: '付完 5 分钟内余额会自动刷新；订单与发票在站点的钱包页。' })
+    return card(null, head, tiles, custom, payMethods, redeem, foot)
   }
 
   /**
@@ -617,10 +663,29 @@
         el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '详情 ›')))
   }
 
-  /** 站点 /pricing 首屏的推荐顺序（抓自它的服务端渲染），默认排序时置顶。 */
-  const SITE_FIRST = ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6.1-terra', 'gpt-6-luna',
-    'claude-fable-5-1', 'claude-fable-5', 'claude-opus-5-5', 'claude-opus-5',
-    'claude-sonnet-5-5', 'claude-sonnet-5', 'glm-5.3']
+  /**
+   * 模型按系列归类：DeepSeek → GLM → Kimi → Qwen → GPT → Claude → Gemini
+   * → Grok → 生图 → 视频 → 语音 → 向量 → 其他。同系列挨在一起。
+   */
+  const SERIES = [
+    ['DeepSeek', /deepseek|ds-|kimseek/i],
+    ['GLM', /glm|智谱/i],
+    ['Kimi', /kimi|moonshot/i],
+    ['Qwen', /qwen|通义/i],
+    ['GPT', /gpt-|o[134]-|codex|sora/i],
+    ['Claude', /claude/i],
+    ['Gemini', /gemini/i],
+    ['Grok', /grok/i],
+    ['生图', /banana|seedream|flux|image|ideogram|z-image|qwen-image|dall/i],
+    ['视频', /veo|sd2|omni|seedance|minimax-h3|video|kling|sora/i],
+    ['语音', /tts|asr|suno|whisper|speech|lyrics|sound/i],
+    ['向量', /embedding|embed/i],
+  ]
+  function modelSeriesOf(name) {
+    const n = String(name || '').toLowerCase()
+    const i = SERIES.findIndex(([, re]) => re.test(n))
+    return i === -1 ? SERIES.length : i
+  }
 
   /** filteredModels 把搜索、分组、类型、厂商筛选叠起来。 */
   function filteredModels() {
@@ -628,12 +693,8 @@
     if (!p) return []
     let list = p.models.slice()
     if (marketSort !== 'latest') {
-      // 默认按站点首屏顺序置顶，其余保持目录原序
-      list.sort((a, b) => {
-        const ia = SITE_FIRST.indexOf(a.name), ib = SITE_FIRST.indexOf(b.name)
-        if (ia !== -1 || ib !== -1) return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-        return 0
-      })
+      // 默认按系列归类（ds → glm → kimi → …），同系列内按名字排
+      list.sort((a, b) => modelSeriesOf(a.name) - modelSeriesOf(b.name) || a.name.localeCompare(b.name))
     }
     if (marketGroup) list = list.filter((m) => (m.enable_groups || []).includes(marketGroup))
     if (marketKind !== 'all') list = list.filter((m) => marketKindOf(m) === marketKind)
@@ -661,10 +722,13 @@
     const p = pricing()
     // 先按功能分栏，栏内按首标签（满血 → 官Key → 低价 → …）再按倍率排
     const FUNC_ORDER = ['对话', '生图', '视频', '语音', '向量']
+    // 分组栏：低价分组整体排上面（是列表里的上下位置，不是标签内前后权重），
+    // 其余按倍率升序。标签内部仍按「功能 → 满血/官Key → 低价」重绘。
+    const isLow = (g) => /低价/i.test(g)
     const rankOf = (g) => {
       const t = groupTags(g)
-      return (FUNC_ORDER.indexOf(t.func) === -1 ? 99 : FUNC_ORDER.indexOf(t.func)) * 1000
-        + leadRank(t.lead) * 10 + (Number(p.groups[g]) || 0)
+      const f = FUNC_ORDER.indexOf(t.func)
+      return (isLow(g) ? 0 : 1) * 10000 + (f === -1 ? 99 : f) * 100 + (Number(p.groups[g]) || 0)
     }
     const groups = Object.keys(p?.groups || {}).sort((a, b) => rankOf(a) - rankOf(b) || a.localeCompare(b, 'zh'))
     const vendors = (p?.vendors || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'))
@@ -696,27 +760,33 @@
       el('div', { class: 'market-seg' },
         el('button', { 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; refreshMarketList() } }, '▦'),
         el('button', { 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; refreshMarketList() } }, '☰')))
-    // 分组按两级排：先功能（生图/视频/语音/向量/对话），再价格倍率
+    // 分组栏两级：低价分组整体排最上面，其余按功能分栏
+    const lowGroups = groups.filter(isLow)
+    const otherGroups = groups.filter((g) => !isLow(g))
     const byFunc = new Map()
-    for (const g of groups) {
+    for (const g of otherGroups) {
       const f = groupTags(g).func
       if (!byFunc.has(f)) byFunc.set(f, [])
       byFunc.get(f).push(g)
+    }
+    const chipOf = (g) => {
+      const ratio = Number(p.groups[g]) || 0
+      return el('button', {
+        class: 'market-chip' + (marketGroup === g ? ' on' : ''),
+        title: '按这个分组筛选',
+        onclick: () => { marketGroup = marketGroup === g ? '' : g; render() },
+      }, groupBadge(g), ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null)
     }
     const groupChips = el('div', { class: 'market-chips' },
       el('button', {
         class: 'market-chip' + (!marketGroup ? ' on' : ''), onclick: () => { marketGroup = ''; render() },
       }, '所有分组'),
+      lowGroups.length ? el('div', { class: 'chip-group' },
+        el('div', { class: 'chip-group-name low', text: '低价' }),
+        el('div', { class: 'market-chips' }, lowGroups.map(chipOf))) : null,
       FUNC_ORDER.filter((f) => byFunc.has(f)).map((f) => el('div', { class: 'chip-group' },
         el('div', { class: 'chip-group-name', text: f }),
-        el('div', { class: 'market-chips' }, byFunc.get(f).map((g) => {
-          const ratio = Number(p.groups[g]) || 0
-          return el('button', {
-            class: 'market-chip' + (marketGroup === g ? ' on' : ''),
-            title: '按这个分组筛选',
-            onclick: () => { marketGroup = marketGroup === g ? '' : g; render() },
-          }, groupBadge(g), ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null)
-        })))))
+        el('div', { class: 'market-chips' }, byFunc.get(f).map(chipOf)))))
     const kinds = el('div', { class: 'market-chips' },
       MARKET_KINDS.map(([k, label]) => el('button', {
         class: 'market-chip' + (marketKind === k ? ' on' : ''),
