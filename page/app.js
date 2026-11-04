@@ -9,7 +9,7 @@
   const bridge = window.magpie
   const $ = (id) => document.getElementById(id)
   const PALETTE = ['#5b8def', '#3aa8c9', '#8b7bf0', '#2fb38f', '#d79a3a', '#d9697a']
-  /** 推荐码：所有从插件出站的站点链接都带上，别人第一次绑定也算邀请。 */
+  /** 推广码仅随站点链接传递；邀请关系是否成立以站点注册规则为准。 */
   const AFF_CODE = '0mY4'
   /** affURL 给站点链接补邀请码；已有 query 用 &。 */
   function affURL(raw) {
@@ -283,7 +283,7 @@
         el('button', {
           class: 'primary',
           disabled: !!pendingAct,
-          onclick: () => act('发起授权', () => call('neartoken:connect', {})),
+          onclick: () => act('发起授权', () => call('neartoken:connect', { affCode: AFF_CODE })),
         }, '连接 NearToken')))
   }
 
@@ -475,7 +475,7 @@
         class: 'tp-input', type: 'text', placeholder: '输入您的兑换码',
         oninput: (e) => { pick.redeem = e.target.value },
       }),
-      el('button', { class: 'ghost', onclick: () => showNotice('兑换额度需要站点提供兑换端点，可在站点钱包页兑换。') }, '兑换额度'))
+      el('button', { class: 'ghost', onclick: () => showNotice('当前插件尚未接入兑换调用，请到站点钱包页兑换。') }, '兑换额度'))
     const foot = el('p', { class: 'note', text: '付完 5 分钟内余额会自动刷新；订单与发票在站点的钱包页。' })
     // 显式 2 列 × 3 行网格：两列的标签行、内容行、输入行逐行对齐，
     // 兑换码框与「输入金额」框天然平行；横向堆叠不超出卡片宽度。
