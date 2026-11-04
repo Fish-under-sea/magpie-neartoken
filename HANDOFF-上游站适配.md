@@ -1,111 +1,103 @@
-# HANDOFF · NearToken 上游站需适配的设备授权端点
+# HANDOFF · NearToken 接口核验与待确认事项
 
-> 面向：`neartoken.cc` 站点维护方
-> 提出方：`@fish-under-sea/magpie-neartoken`（magpie 原生页面插件）
-> 日期：2026-11-04
-> 关联：FISH-DOCK-Plugins issue（宿主侧改动另见该仓）
+> 核验日期：2026-11-05（Asia/Shanghai）
+> 插件：`@fish-under-sea/magpie-neartoken`，核验基线 0.6.3；本次页面修复发布版本为 0.6.4。
+> 本文替换 2026-11-04 版。旧版把匿名探测、代码推测和真实账户验证混在了一起；下面按证据等级重新区分。
 
-## 1. 背景
+## 1. 项目与责任边界
 
-插件走站点自己的设备授权（`/api/dsh/device/authorize` → `/api/dsh/device/token`），拿到的 `access_token` 是一把 **API token**，不是站点用户的登录 session。页面运行在 magpie 的 sandbox 帧里，`CSP connect-src 'none'`，一条 fetch 都发不出去；所有站点数据只能由插件运行时（`index.mjs`）或宿主（`FISH-DOCK-Plugins` 的 neartoken 供应商）代发。
+这是独立的 magpie 页面 / provider 插件，不是 FISH Dock 插件。插件仓库仅交付插件代码，不包含 magpie 源码或补丁。
 
-因此，任何「用户态」数据都必须有**设备 token 可访问的端点**。
+用户指定的 [FISH-DOCK-Plugins issue 区](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues) 是本次 **magpie 定制宿主适配的跟踪位置**，不代表插件属于 Dock，也不代表仓库本身就是宿主。本文所称宿主代码证据，特指该仓的 magpie 补丁；不要将其等同于上游 yetone/magpie 或用户已安装的二进制。
 
-## 2. 实测结果（不带凭据直接探测）
+核对范围：
 
-| 端点 | 状态 | 返回 |
-| --- | --- | --- |
-| `GET /api/dsh/device/wallet` | 401 | `Token not provided`（带设备 token 可用，返回 `used_quota` / `quota` / `username`） |
-| `GET /api/user/self` | 401 | `AUTH_UNAUTHORIZED / Unauthorized, invalid access token` |
-| `GET /api/user/aff` | 401 | 同上 |
-| `GET /api/user/topup` | 401 | 同上 |
-| `GET /api/redemption/` | 401 | 同上 |
-| `GET /api/dsh/device/redeem` | 404 | `Invalid URL` |
-| `GET /api/dsh/device/aff` | 404 | `Invalid URL` |
-| `POST /api/dsh/device/authorize` / `token` | 可用 | 设备授权链路正常 |
-| `GET /api/pricing` | 200 | 目录里**没有** `created_at` / `release_date` / `sort_version` 字段 |
+- 插件发布基线提交 `1697847`，以及本轮本地修复。
+- 宿主仓树提交 `17980f9cef5eff527262c2ffb96e0775e73a2c55` 中的 `plugins/magpie/patches/magpie-v0.1.2799+fish.14.patch`。只读审查，未修改或打包宿主代码。
+- GitHub issue #22、#23、#25、#26、#27 的正文与维护者回复。
+- 2026-11-05 00:20–00:23 的站点公开页面、公开脚本及匿名 GET 应答。未读取本机用户凭据，未执行真实兑换或新用户注册。
 
-## 3. 需要上游站做的三件事
+## 2. 已确认的事实
 
-### 3.1 邀请数据（推荐计划的邀请人数）
-
-**现状**：站点 `/pricing` 页面的「推荐计划」卡显示邀请数与 `aff_code`，但 `/api/user/self` 只认用户 session，设备 token 拿不到；`/api/dsh/device/wallet` 也不带这些字段。插件页面的「邀请」只能显示「—」。
-
-**请求**：在 `/api/dsh/device/wallet` 的应答里补上（或新增 `GET /api/dsh/device/aff`）：
-
-```jsonc
-{
-  "success": true,
-  "data": {
-    "username": "fish",
-    "quota": 643200,
-    "used_quota": 231500,
-    "aff_code": "0mY4",         // 本人推荐码
-    "aff_count": 1,             // 已邀请人数
-    "aff_quota": 0,             // 累计邀请奖励（站点内部单位）
-    "aff_history_quota": 0      // 可选
-  }
-}
-```
-
-字段名保持与站点用户对象一致即可，插件侧已兼容
-`aff_count` / `affCount` / `invite_count` / `invites` / `referral_count` 等写法。
-
-### 3.2 兑换码真实兑换
-
-**现状**：插件「添加资金」卡里有「输入您的兑换码 → 兑换额度」，但 `/api/redemption/` 需要用户 session；设备通道没有兑换端点，按钮只能提示「请到站点钱包页兑换」。
-
-**请求**：新增设备 token 可用的兑换端点，例如：
-
-```
-POST /api/dsh/device/redeem
-Authorization: Bearer <设备 access_token>
-Content-Type:  application/json
-
-{ "code": "<兑换码>" }
-```
-
-应答：
-
-```jsonc
-// 成功
-{ "success": true, "data": { "quota": 50000, "amount": "¥10.00" } }
-// 失败
-{ "success": false, "message": "invalid_code" }   // 或 expired / already_used
-```
-
-请把兑换码校验、幂等、限额都放在站点侧；插件只负责转发与显示结果。
-
-### 3.3 邀请码绑定（「通过插件访问就算邀请」）
-
-**现状**：插件已把**所有出站点链接**补上 `aff=<推荐码>`（注册页、设备授权确认页、模型详情、订单历史、推荐链接）。但设备授权确认页 `verification_uri_complete` 带的 `aff` 查询参数，站点注册流程是否据此建立邀请关系，插件无法验证——用户反馈「邀请码貌似无法真实兑换」。
-
-**请求**：
-1. `POST /api/dsh/device/authorize` 接受可选 `aff` 参数并绑定本次授权；或
-2. 确认 `verification_uri_complete` 上的 `aff` 会在用户注册时写入邀请关系；
-3. 注册成功后 `aff_count` 能即时 +1（这样插件 60 秒刷新就能看到变化）。
-
-## 4. 模型「最新版本」排序（次要）
-
-`GET /api/pricing` 的 `data[]` 没有上架时间字段。站点前端的排序常量是
-`{ VERSION: "version", NAME: "name", PRICE_LOW: "price-low", PRICE_HIGH: "price-high" }`，
-前端按版本号比较。插件目前用模型名里的数字版本号降序做实时近似（如 `gpt-6.1 > gpt-6 > gpt-5.6`）。
-
-**请求（可选）**：在 `data[]` 每项补一个 `created_at`（unix 秒）或 `sort_version`，
-插件即可按站点权威时间排序，不再猜版本号。
-
-## 5. 验收用例
-
-1. 设备 token 调 `wallet` 能拿到 `aff_count`；站点邀请 1 人后，插件首页「邀请」显示 1（60 秒内刷新）。
-2. 再邀请一人，显示 2。
-3. 设备 token 调 `redeem` 兑换一张有效码成功，账户余额增加；无效码返回明确错误码。
-4. 用带 `aff` 的确认页注册新账号，推荐人的 `aff_count` +1。
-5. 未拿到邀请数据时插件显示「—」，不显示 0。
-
-## 6. 分工
-
-| 事项 | 责任方 |
+| 项目 | 证据与结论 |
 | --- | --- |
-| 3.1 / 3.2 / 3.3 的端点与字段 | **上游站（本文档）** |
-| `neartoken:state` 透传邀请字段、新增 `neartoken:redeem` 调用、确认页 aff 参数 | **宿主（FISH-DOCK-Plugins issue）** |
-| 页面渲染、链接带 aff、`page/aff.js` 每分钟重载 | 插件（已完成） |
+| 页面网络边界 | 页面经 magpie bridge 调用 `neartoken:*`；公开目录由插件运行时写入脚本快照。不要把页面受限推导成所有用户端点均需重建。 |
+| 设备授权令牌 | 插件把设备授权返回值保存为 `auth.access`，向 wallet 发送 Bearer。仅凭字段名或匿名 401，不能判定所有用户接口的鉴权能力。 |
+| 宿主连接推广参数 | `connect(params)` 已读取 `params.affCode`，`authorize()` 经 `withAffiliate()` 给确认 URL 加参数。0.6.3 页面却传 `{}`；本轮修复为 `{ affCode: AFF_CODE }`。这是插件漏传，不是已证实的宿主丢参。 |
+| 页面兑换按钮 | 0.6.3 只调用提示函数，未发送兑换请求。宿主分派和插件 `magpie.calls` 都没有 `neartoken:redeem`。因此没有发生真实兑换，并不能据此认定站点没有兑换接口。 |
+| 宿主邀请字段 | 被审补丁的 `View` / `Account` 未定义邀请数、本人推荐码或邀请奖励；wallet 解码仅保留余额、已用与 `group_credits`。这是宿主转换层的遗漏，不能反推服务端原始 JSON 没有字段。 |
+| 供应商交接 | 被审补丁已包含 `pluginOwnsProvider()`、`keepGrant()`、`handOver()`。#22 已关闭；再次出现症状应核对安装版本和运行态，不能继续断言所有版本都无条件创建重复供应商。 |
+| 分组目录 | #23 已关闭，维护者说明已加入 `groupList` / `tokenName`。当前插件模型广场实际读取 `NEARTOKEN_PRICING.groups`，并非优先读取 `view.groupList`。 |
+
+## 3. 匿名端点探测的证明范围
+
+| 请求 | 本轮结果 | 可以得出的结论 |
+| --- | --- | --- |
+| `GET /api/dsh/device/wallet`，无凭据 | 401，`Token not provided` | 该请求需要令牌；尚未取得本轮有效设备令牌的原始成功响应。 |
+| `GET /api/user/self`，无凭据 | 401，`Unauthorized, invalid access token` | 匿名请求失败；不证明该接口「只认 session、不认设备 token」。 |
+| `GET /api/dsh/device/redeem`，无凭据 | 404，`Invalid URL (GET /api/dsh/device/redeem)` | GET 路由未匹配；不证明 POST 同路径不存在。 |
+| `GET /api/pricing` | 200，109 个模型 | 当前样本没有 `created_at`、`release_date`、`sort_version`；有 `pricing_version`。这只是该样本，不是永久接口承诺。 |
+
+旧版对 `/api/user/aff`、`/api/user/topup`、`/api/redemption/` 的匿名 401，同样不构成设备令牌测试。旧版指定 `/api/redemption/` 为用户兑换入口缺乏证据，撤回该判断；应先定位当前钱包前端真实发出的请求方法、路径和请求体。
+
+**本轮没有验证**：设备令牌访问用户端点的权限、成功 wallet 的完整字段、有效兑换码效果、注册后的推荐归属。上述事项保留为待验证，不记为站点缺陷。
+
+## 4. 邀请数据与推荐归属
+
+### 4.1 先厘清展示属于谁
+
+`AFF_CODE = '0mY4'` 是插件固定推广码，不代表每位登录用户本人的推荐码。0.6.3 的推荐链接使用它，而邀请数可能来自当前登录账户；这两者存在归属混用，应由插件侧后续明确「插件推广」与「我的推荐计划」。不能要求服务端返回固定值来配合页面。
+
+带 `aff` 的 URL 只证明参数被传递。是否建立邀请关系、已注册用户是否有资格绑定、奖励何时结算，都以站点规则和真实注册链路为准。撤回「第一次绑定插件就一定算邀请」的承诺。
+
+### 4.2 当前字段支持的真实范围
+
+| 位置 | 实际读取 / 使用 |
+| --- | --- |
+| `index.mjs` 的 `writeAff()` | 将 `aff_count` / `affCount` / `invite_count` / `invite_num` / `invites` / `referral_count` / `aff_invite_count` 归一为 `invites`。 |
+| 同一快照写入函数 | 会保存 `affCode`、`affQuota`；保存不等于页面已使用。 |
+| `referralCard()` 的宿主状态回退 | 读取 `view.invites` / `view.inviteCount` / `view.affCount` / `view.aff_count`，不包含全部上述别名。 |
+| `referralCard()` 的推荐链接和奖励 | 链接仍用固定推广码；没有展示 `affCode` / `affQuota` 的接入。旧 issue 所称「页面全部已兼容」不准确。 |
+
+缺失邀请数显示「—」；明确返回的 `0` 才显示 0。
+
+### 4.3 同步时序与已知局限
+
+- 插件后台计划每 **5 分钟**拉目录和邀请数据；邀请同步依赖 `getAuth()` 已被 loader / usage 注册。
+- 页面每 **60 秒**重载脚本快照；这不等于每 60 秒重新请求上游。
+- 正常后台路径可能要等待下一轮 5 分钟写入，再等 1 分钟页面读取；网络、宿主进程寿命及只读安装还会影响它。撤回「邀请后必在 60 秒内显示」的承诺。
+- `auth.usage()` 还会用 wallet 数据重写快照；若 wallet 没有邀请字段，可能覆盖此前更完整的数据。读取失败保留旧快照也有账户归属 / 过期问题。以上均是插件需跟进的事项，不应转嫁为上游必须新增接口。
+
+### 4.4 站点待确认项，而非强制新增端点
+
+1. 用同一有效设备令牌读取 wallet 和站点确认可用的用户资料接口，仅记录脱敏后的字段名、类型及账户关联。
+2. 若现有接口已含所需字段：修复宿主解析 / 透传与插件归属和消费逻辑，无需新增站点接口。
+3. 若设备令牌确实没有相应能力：再请站点确认最小只读能力与字段契约。扩展 wallet 或另设接口是待讨论方案，不是既成要求。
+
+## 5. 兑换功能的正确接入顺序
+
+1. 先确认站点钱包实际使用的兑换接口及鉴权规则；不要把管理员兑换码管理接口直接当成用户兑换接口。
+2. 由站点维护方确认设备令牌是否可调用该接口。仅当现有接口不支持所需能力时，再讨论新增设备端点。
+3. 宿主增加经确认的桥接调用和 `PageCalls` 允许项；`neartoken:redeem` 只是建议名称。请求体、结果形状和错误码尚未冻结。
+4. 插件自己更新 `package.json` 的 `magpie.calls`，并实现按钮请求、输入保留、忙态、错误提示及成功后的余额刷新。宿主不负责修改独立 npm 包。
+5. 验证有效码、无效码、重复提交、会话过期与旧宿主兼容。测试使用双方确认的测试码，不在审计中消费真实额度。
+
+因此，撤回「上游与宿主落地后插件不用再改」的旧结论。当前按钮未接入，三方契约明确后仍需插件改动。
+
+## 6. 模型版本排序
+
+当前站点脚本包含 `VERSION: "version"` 与 `Latest version` 标签，这只能证明存在该排序选项，不能单凭常量证明比较器实现。
+
+0.6.3 插件从模型名称抽取数字并降序比较，是插件近似算法，不是站点权威发布时间。`pricing_version` 不能未经契约确认就当作模型发布版本；新增 `created_at` 也不等同于「最新模型版本」。撤回原先为修复版本排序而要求站点新增时间字段的结论，应先复核站点真实比较器。
+
+## 7. 问题跟踪与验收
+
+| 跟踪项 | 本轮核验结论 |
+| --- | --- |
+| #22 | 已关闭，维护者已交付供应商交接；按历史问题保留，补充新版模型不再按分组展开的说明。 |
+| #23 | 已关闭，groupList 已交付；当前页面未消费该字段，不继续称其为阻塞。 |
+| #25 | 保留用户的同步 / 掉列表现象；撤回未证实的统一根因、固定 104 行及「点筛选组即可切换路由」断言，要求按实际版本复现。 |
+| #26 | 聚焦邀请字段透传及账户归属；纠正鉴权、字段兼容和刷新周期承诺。 |
+| #27 | 聚焦待确认的兑换桥接契约；推广参数漏传属于插件，本轮已修。 |
+
+验收应分别记录：公开 GET 事实、代码静态事实、使用有效设备令牌的集成结果、真实账户 UI 结果。代码检查和 mock 预览通过，不冒充真实宿主 / 真实账户联调通过。
