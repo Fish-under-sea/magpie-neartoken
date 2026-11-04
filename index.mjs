@@ -12,7 +12,7 @@
 // 站点自己的 /v1/models 按令牌分组过滤，很多账号拿到的是空列表，所以模型目录
 // 直接读 /api/pricing（公开、全量），不靠那个端点。
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -118,6 +118,9 @@ const hasWord = (id, words) => words.some((w) => id.toLowerCase().includes(w))
  * 按那一行走那一组——这就是"模型后面跟着它的分组"。
  */
 async function catalog(disabled = new Set()) {
+  // 同时把「全部分组」抄一份给页面：页面在沙箱里发不出网络请求，但能加载自己
+  // 目录下的脚本，所以这里写 page/groups.js，模型广场按它重绘。
+  const groupsOut = new Map()
   const env = await call('/api/pricing')
   const rows = Array.isArray(env?.data) ? env.data : []
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
@@ -132,6 +135,13 @@ async function catalog(disabled = new Set()) {
     const film = hasWord(model, FILMS)
     if (!chat && !drawer && !film) continue
     const all = Array.isArray(row?.enable_groups) && row.enable_groups.length ? row.enable_groups : ['']
+    // 先按「全部分组」计数（关掉的也算），模型广场要显示它有多少个模型
+    for (const raw of all) {
+      const g = String(raw ?? '').trim()
+      if (!g) continue
+      const had = groupsOut.get(g)
+      groupsOut.set(g, { name: g, ratio: 0, models: (had?.models || 0) + 1, ref: '' })
+    }
     const groups = all.filter((g) => !disabled.has(String(g ?? '').trim()))
     if (!groups.length) continue
     for (const raw of groups) {
@@ -156,7 +166,28 @@ async function catalog(disabled = new Set()) {
       }
     }
   }
+  writeGroups([...groupsOut.values()].map((g) => ({
+    ...g,
+    ratio: Number(ratios[g.name]) > 0 ? Number(ratios[g.name]) : 0,
+    ref: refs[g.name] ? String(refs[g.name]) : '',
+  })).sort((a, b) => a.name.localeCompare(b.name, 'zh')))
   return out
+}
+
+/**
+ * writeGroups 把分组表写成 page/groups.js，给沙箱里的页面用。
+ *
+ * 页面发不出网络请求（CSP connect-src 'none'），但能加载自己目录下的脚本，
+ * 所以这里不推数据、只落一个文件：`<script src="groups.js?t=…">` 一引就有。
+ * 写不进去（插件目录只读）就跳过，页面退回它自己的说明。
+ */
+function writeGroups(groups) {
+  try {
+    const js = 'self.NEARTOKEN_GROUPS = ' + JSON.stringify(groups) + '\nself.NEARTOKEN_GROUPS_AT = ' + Date.now() + '\n'
+    writeFileSync(join(here, 'page', 'groups.js'), js, 'utf8')
+  } catch {
+    /* 只读安装：页面自己会说没拿到明细 */
+  }
 }
 
 export default async function neartoken(input, options) {

@@ -23,6 +23,9 @@
   let disabledGroups = new Set()
   /** 当前视角：home / market / logs。 */
   let tab = 'home'
+  /** 插件写下的分组快照（page/groups.js），页面加载脚本取到。 */
+  let groupSnapshot = null
+  let groupsAsked = false
   const pick = { amount: null, method: null, custom: '' }
   /** 正在等宿主的哪个动作。 */
   let pendingAct = ''
@@ -215,6 +218,9 @@
           if (key !== 'home' && view.configured && !windows.has(span)) {
             call('neartoken:usage', { range: span }).then((w) => { windows.set(span, w); render() }).catch(showError)
           }
+          if (key === 'market' && !groupSnapshot) {
+            loadGroups().then((got) => { if (got) render() })
+          }
         },
       }, label)))
   }
@@ -376,6 +382,39 @@
     return card('充值', ...parts)
   }
 
+  /**
+   * loadGroups 取分组快照。
+   *
+   * 页面在沙箱里发不出网络请求（CSP connect-src 'none'），但能加载自己目录下的
+   * 脚本；插件（index.mjs）每次拉目录都会写一份 page/groups.js，这里引一下就有。
+   */
+  function loadGroups(force) {
+    if (groupsAsked && !force) return Promise.resolve(groupSnapshot)
+    groupsAsked = true
+    return new Promise((resolve) => {
+      const s = document.createElement('script')
+      s.src = 'groups.js?t=' + Date.now()
+      s.onload = () => {
+        groupSnapshot = Array.isArray(self.NEARTOKEN_GROUPS) ? self.NEARTOKEN_GROUPS : null
+        resolve(groupSnapshot)
+      }
+      s.onerror = () => resolve(null)
+      document.head.append(s)
+    })
+  }
+
+  /** retryGroups 让插件重新拉一次目录（刷新模型表也顺手刷新了这份快照）。 */
+  async function retryGroups() {
+    groupSnapshot = null
+    render()
+    try {
+      await bridge.call('neartoken:refresh', {})
+    } catch {
+      /* 刷新失败也让下面的读取照跑一次 */
+    }
+    await loadGroups(true)
+    render()
+  }
   /** 分组落在哪一类：低价 / 满血 / 图片 / 视频 / 语音 / 向量 / 其他。 */
   function bucketOf(name) {
     const n = String(name || '')
@@ -391,19 +430,18 @@
 
   /** 模型广场：按站点返回的分组重绘，分组即为开关。 */
   function marketCard() {
-    const list = Array.isArray(view.groupList) ? view.groupList : null
+    const list = Array.isArray(view.groupList) && view.groupList.length ? view.groupList : groupSnapshot
     const head = el('div', { class: 'row' },
       el('h2', { class: 'grow', text: '分组', style: 'margin:0' }),
       el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场 ↗'))
     if (!list || !list.length) {
       return card(null, head,
         el('p', { class: 'note' },
-          '宿主还没把分组明细交给页面（`neartoken:state` 目前只回分组数）。'),
-        el('p', { class: 'note' },
-          '开关已接好：写进 magpie 的 plugin options，provider 插件按它过滤模型表；',
-          '宿主一回 groupList，这里就按站点分组重绘。先去 ',
-          el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场'),
-          ' 看分组与倍率。'))
+          '还没拿到分组表。点「重新读取」——插件会去站点拉一次 /api/pricing，',
+          '写成 page/groups.js，页面加载它就有数据（不需要宿主改动）。'),
+        el('div', { class: 'row', style: 'margin-top:10px' },
+          el('button', { class: 'ghost', onclick: () => retryGroups() }, '重新读取'),
+          el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer', style: 'align-self:center' }, '站点广场 ↗')) )
     }
     const buckets = new Map()
     for (const g of list) {
