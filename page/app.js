@@ -9,6 +9,18 @@
   const bridge = window.magpie
   const $ = (id) => document.getElementById(id)
   const PALETTE = ['#5b8def', '#3aa8c9', '#8b7bf0', '#2fb38f', '#d79a3a', '#d9697a']
+  /** 推荐码：所有从插件出站的站点链接都带上，别人第一次绑定也算邀请。 */
+  const AFF_CODE = '0mY4'
+  /** affURL 给站点链接补邀请码；已有 query 用 &。 */
+  function affURL(raw) {
+    const u = String(raw || '').trim()
+    if (!u) return u
+    try {
+      const x = new URL(u, 'https://neartoken.cc')
+      if (!x.searchParams.has('aff')) x.searchParams.set('aff', AFF_CODE)
+      return x.toString()
+    } catch { return u }
+  }
 
   /** 上一次 neartoken:state 的应答。 */
   let view = null
@@ -254,6 +266,7 @@
         '插件不接触密码。连接之后模型由 magpie 的供应商页统一选择，这里只管账户与额度。'),
       el('ul', { class: 'steps' },
         el('li', { text: '站点支持密码、GitHub、Discord、LinuxDo、OIDC、Telegram、微信与 Passkey 登录。' }),
+        el('li', {}, '还没有账号？', el('a', { class: 'link', href: affURL('https://neartoken.cc/sign-up'), target: '_blank', rel: 'noreferrer' }, '带推荐码注册 ↗')),
         el('li', { text: '点下面按钮，浏览器会打开确认页；用你平时的方式登录并批准。' }),
         el('li', { text: '回到这里，NearToken 会自动接入，不需要粘贴任何密钥。' })),
       el('div', { class: 'row', style: 'margin-top:14px' },
@@ -273,7 +286,7 @@
         disabled: !!pendingAct,
         onclick: () => act('打开确认页', () => call('neartoken:open')),
       }, '打开确认页'),
-      el('button', { disabled: !!pendingAct, onclick: () => copy(p.verificationUriComplete) }, '复制链接'),
+      el('button', { disabled: !!pendingAct, onclick: () => copy(affURL(p.verificationUriComplete)) }, '复制链接'),
       el('button', {
         class: 'ghost',
         disabled: !!pendingAct,
@@ -297,19 +310,23 @@
 
   /** 推荐计划：站点「复制推荐链接」那一栏的长条卡，跨整行放最下面。 */
   function referralCard() {
-    const aff = view.affCode || view.referralCode || ''
-    const url = aff ? 'https://neartoken.cc/sign-up?aff=' + encodeURIComponent(aff)
-      : 'https://neartoken.cc/console'
-    const invites = Number(view.invites) || 0
+    const url = affURL('https://neartoken.cc/sign-up')
+    // 邀请数只认真实值：优先插件从站点 wallet 写出的快照，其次宿主 state；
+    // 都没有就显示「—」，不再拿 0 假装同步过。
+    const aff = self.NEARTOKEN_AFF || {}
+    const raw = aff.invites ?? view.invites ?? view.inviteCount ?? view.affCount ?? view.aff_count
+    const invites = (raw === undefined || raw === null || raw === '') ? '—' : String(raw)
+    const stamp = aff.at ? ' · 同步 ' + new Date(Number(aff.at)).toTimeString().slice(0, 5) : ''
     return el('section', { class: 'card home-wide' },
       el('div', { class: 'rf' },
         el('div', { class: 'rf-ico', text: '◈' }),
         el('div', { class: 'rf-text' },
           el('h2', { text: '推荐计划', style: 'margin:0' }),
           el('p', { class: 'note', text: '用户通过您的推荐链接注册后，您即可获得奖励。可随时将累计奖励转入余额。', style: 'margin:2px 0 0' })),
-        el('div', { class: 'rf-invites' }, el('div', { class: 'k', text: '邀请' }), el('div', { class: 'v', text: String(invites) })),
+        el('div', { class: 'rf-invites' }, el('div', { class: 'k', text: '邀请' }), el('div', { class: 'v', text: invites })),
         el('div', { class: 'rf-link' }, el('span', { text: url })),
-        el('button', { class: 'rf-copy', title: '复制推荐链接', onclick: () => copy(url) }, '⧉')))
+        el('button', { class: 'rf-copy', title: '复制推荐链接', onclick: () => copy(url) }, '⧉'),
+        stamp ? el('span', { class: 'note', style: 'margin:0 0 0 2px', text: stamp }) : null))
   }
 
   /** 附件：账户、余额、代金券。 */
@@ -403,7 +420,7 @@
       el('div', { class: 'grow' },
         el('h2', { text: '添加资金', style: 'margin:0' }),
         el('p', { class: 'note', text: '选择金额和支付方式', style: 'margin:2px 0 0' })),
-      el('a', { class: 'ghost link', href: 'https://neartoken.cc/wallet', target: '_blank', rel: 'noreferrer' }, '订单历史 ↗'),
+      el('a', { class: 'ghost link', href: affURL('https://neartoken.cc/wallet'), target: '_blank', rel: 'noreferrer' }, '订单历史 ↗'),
       el('button', { class: 'primary', disabled: !!pendingAct || !amount, onclick: () => pay(method) }, '去支付'))
     const tiles = el('div', { class: 'tp-tiles' }, options.map((v) => {
       const on = v === amount && !pick.custom
@@ -529,6 +546,17 @@
       s.dataset.ntPrice = '1'
       s.onload = () => {
         if (prev && prev !== s) prev.remove()
+        // 站点邀请数据也跟着刷一次
+        const prevAff = document.querySelector('script[data-nt-aff]')
+        const a = document.createElement('script')
+        a.src = 'aff.js?t=' + Date.now()
+        a.dataset.ntAff = '1'
+        a.onload = () => {
+          if (prevAff && prevAff !== a) prevAff.remove()
+          if (tab === 'home') render()
+        }
+        a.onerror = () => a.remove()
+        document.head.appendChild(a)
         if (tab === 'market') refreshMarketList()
         if (tab === 'market') render()
       }
@@ -785,7 +813,7 @@
         el('span', null, el('span', { class: 'k', text: '吞吐' }),
           el('span', { class: 'v', text: m.throughput || '—t/s' }))),
       el('div', { class: 'mc-foot' },
-        el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '详情 ›')))
+        el('a', { class: 'link', href: affURL('https://neartoken.cc/pricing'), target: '_blank', rel: 'noreferrer' }, '详情 ›')))
   }
 
   /** filteredModels 把搜索、分组、类型、厂商筛选叠起来。 */

@@ -17,6 +17,20 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SITE = 'https://neartoken.cc'
+/** 推荐码：所有从插件出站的站点链接都带上，别人第一次绑定也算邀请。 */
+const AFF_CODE = '0mY4'
+/** affURL 给站点链接补邀请码；已有 query 用 &，链接为空原样返回。 */
+function affURL(raw) {
+  const u = String(raw || '').trim()
+  if (!u) return u
+  try {
+    const x = new URL(u, SITE)
+    if (!x.searchParams.has('aff')) x.searchParams.set('aff', AFF_CODE)
+    return x.toString()
+  } catch {
+    return u
+  }
+}
 /** 站点确认页上的称呼，也是站点给这把钥匙起的名字（HANDOFF：Magpie 与 DSH 是两把）。 */
 const CLIENT_NAME = 'Magpie'
 const TOKEN_NAME = 'Magpie'
@@ -301,6 +315,27 @@ function writePricing(env) {
   }
 }
 
+/**
+ * writeAff 把 wallet 应答里的邀请/推荐字段写成 page/aff.js。
+ * 页面沙箱发不出请求，靠加载这个脚本读实时值；字段名按站点常见写法都认。
+ */
+function writeAff(d) {
+  try {
+    const pick = (...keys) => {
+      for (const k of keys) if (d[k] !== undefined && d[k] !== null && d[k] !== '') return d[k]
+      return undefined
+    }
+    const snap = {
+      at: Date.now(),
+      invites: pick('aff_count', 'affCount', 'invite_count', 'invite_num', 'invites', 'referral_count', 'aff_invite_count'),
+      affCode: pick('aff_code', 'affCode', 'referral_code', 'aff'),
+      affQuota: pick('aff_quota', 'affQuota', 'aff_history_quota'),
+    }
+    writeFileSync(join(here, 'page', 'aff.js'),
+      '// 由插件运行时从 wallet 应答写入\nself.NEARTOKEN_AFF = ' + JSON.stringify(snap) + '\n', 'utf8')
+  } catch { /* 只读安装：页面退回宿主 state */ }
+}
+
 /** stampLatest 把 npm 上的最新版本写进 page/latest.js，一分钟内不重复问。 */
 let latestAskedAt = 0
 async function stampLatest() {
@@ -324,14 +359,46 @@ async function stampLatest() {
   }
 }
 
+/** 缓存 getAuth：定时同步邀请数时要用到站点钥匙。 */
+let authGetter = null
+function rememberAuth(getAuth) { if (typeof getAuth === 'function') authGetter = getAuth }
+
 /**
- * scheduleCatalogSync 后台定时刷新目录快照，一个进程只起一个定时器。
+ * fetchAff 主动拉一次站点用户资料，把邀请数/推荐码写进 page/aff.js。
+ * 页面沙箱发不出请求，靠加载这个脚本读实时值。
+ */
+async function fetchAff() {
+  if (!authGetter) return
+  try {
+    const auth = await authGetter()
+    const key = auth?.access || auth?.key || ''
+    if (!key) return
+    let d = {}
+    try {
+      const r = await call('/api/user/self', { key })
+      if (r?.success === true && r?.data && typeof r.data === 'object') d = { ...r.data }
+    } catch { /* 站点不认这把钥匙就用 wallet 兜底 */ }
+    try {
+      const w = await call('/api/dsh/device/wallet', { key })
+      if (w?.success === true && w?.data && typeof w.data === 'object') d = { ...w.data, ...d }
+    } catch { /* 已有资料就够 */ }
+    if (Object.keys(d).length) writeAff(d)
+  } catch { /* 拿不到就保持上次的值 */ }
+}
+
+/**
+ * scheduleCatalogSync 后台定时刷新目录快照与邀请数据，一个进程只起一个定时器。
  * 拉全量（不带禁用参数）写 page/pricing.js，禁用状态由页面自己管。
  */
 let catalogTimer = null
 function scheduleCatalogSync() {
   if (catalogTimer) return
-  catalogTimer = setInterval(() => { catalog(new Set(), new Set()).catch(() => {}) }, 5 * 60 * 1000)
+  const tick = () => {
+    catalog(new Set(), new Set()).catch(() => {})
+    fetchAff().catch(() => {})
+  }
+  tick()
+  catalogTimer = setInterval(tick, 5 * 60 * 1000)
   if (typeof catalogTimer.unref === 'function') catalogTimer.unref()
 }
 
@@ -384,7 +451,7 @@ export default async function neartoken(input, options) {
               expiresAt: Date.now() + (Number(d.expires_in) || 600) * 1000,
             }
             return {
-              url: d.verification_uri_complete || d.verification_uri,
+              url: affURL(d.verification_uri_complete || d.verification_uri),
               instructions: `在站点上确认这个码：${d.user_code}（登录用你平时的方式，插件不收密码）`,
             }
           },
@@ -422,6 +489,7 @@ export default async function neartoken(input, options) {
       ],
       /** 余额：站点钱包端点，按 magpie 的用量卡显示。 */
       async usage(getAuth) {
+        rememberAuth(getAuth)
         await stampLatest()
         const auth = await getAuth()
         const key = auth?.access || auth?.key
@@ -430,6 +498,8 @@ export default async function neartoken(input, options) {
         if (env?.success !== true) throw new Error('读取余额失败：' + (env?.message || '站点拒绝'))
         const d = env.data ?? {}
         const used = Number(d.used_quota) || 0
+        // 把站点给的推荐信息透给页面（页面不能 fetch，靠这个脚本读）
+        writeAff(d)
         return {
           user: typeof d.username === 'string' ? d.username : '',
           balance: text(Number(d.quota) || 0, cur),
@@ -438,6 +508,7 @@ export default async function neartoken(input, options) {
       },
       /** 请求带着这把钥匙出去；分组头由每个模型自己带（见 catalog）。 */
       async loader(getAuth) {
+        rememberAuth(getAuth)
         const auth = await getAuth()
         const key = auth?.access || auth?.key || ''
         return {

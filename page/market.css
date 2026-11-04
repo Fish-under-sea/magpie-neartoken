@@ -35,11 +35,12 @@
 
 .market-body { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 14px; align-items: start; }
 .market { width: 100%; }
-.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+/* 卡片列数按容器宽度自动算（auto-fill 238px），只在下方一处定义 */
 
 .market-aside {
   position: sticky; top: 10px;
-  max-height: none;                 /* 不设内部滚动：分组栏随整页铺开，长图能截全 */
+  max-height: calc(100vh - 20px); overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin;
   padding: 12px; border: 1px solid var(--nt-line); border-radius: 12px;
   background: rgba(255,255,255,.02);
 }
@@ -82,7 +83,10 @@
 .market-count { font-size: 13px; font-weight: 600; margin: 2px 0 10px; }
 .market-main > .note { margin-top: 10px; }
 
-.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(292px, 1fr)); gap: 10px; align-items: stretch; }
+/* 按容器宽度（不是视口断点）自动算列数。magpie 的窗口宽度固定，
+   卡片区刚好容得下两张卡；最小列宽 430px 保证固定落 2 列，
+   窗口更宽时才自动增到 3、4 列，不会把卡片挤窄。 */
+.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr)); gap: 10px; align-items: stretch; }
 .model-grid.as-list { grid-template-columns: 1fr; }
 
 .mc {
@@ -262,8 +266,7 @@
 .logs > .note { margin: 8px 2px 0; }
 
 @media (max-width: 900px) {
-  .market-body { grid-template-columns: 1fr; }
-  .market-aside { position: static; max-height: none; }
+  /* 窗口宽度固定，筛选栏与卡片区始终并排；左栏自己滚，不切单列 */
   .lt-row { grid-template-columns: 80px minmax(120px, 1.5fr) 90px 90px 60px; }
   .lt-row > span:nth-child(2), .lt-row > span:nth-child(4), .lt-row > span:nth-child(6), .lt-row > span:nth-child(8) { display: none; }
 }
