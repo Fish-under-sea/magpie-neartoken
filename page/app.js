@@ -97,6 +97,15 @@
   // ---------- 主流程 ----------
 
   async function boot() {
+    // 版本号来自 page/version.js（由 scripts/stamp.mjs 按 package.json 生成）
+    const ver = self.NEARTOKEN_VERSION
+    if (ver) {
+      const chip = document.getElementById('version')
+      if (chip) {
+        chip.textContent = 'v' + ver
+        chip.title = '插件版本 ' + ver
+      }
+    }
     // 预览用：?tab=market 可直接落在某个视角，生产里没这个参数就是原本界面
     const want = new URLSearchParams(location.search).get('tab')
     if (want === 'market' || want === 'logs' || want === 'home') tab = want

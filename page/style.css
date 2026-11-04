@@ -448,3 +448,13 @@ select {
 .log-row.head { color: var(--nt-muted); font-size: 11px; border-bottom-color: transparent; }
 .log-row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-row .num { text-align: right; font-family: var(--nt-code); font-variant-numeric: tabular-nums; color: var(--nt-muted); }
+/* 版本号与更新入口 */
+.chip.ver {
+  font-family: var(--nt-code);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--nt-muted);
+  padding: 3px 8px;
+}
+
+.ghost.link { text-decoration: none; display: inline-flex; align-items: center; }
