@@ -155,8 +155,9 @@
   function tick() {
     tickCount += 1
     const counting = view && view.pending
-    if (counting && tickCount % 2 === 0) load().catch(() => {})
-    else if (!counting && tickCount % 60 === 0) load().catch(() => {})
+    // 等确认时每秒问一次：站点那边一点批准，这边下一拍就能接上
+    if (counting) load().catch(() => {})
+    else if (tickCount % 60 === 0) load().catch(() => {})
     if (counting) paintCountdown()
   }
 
@@ -253,6 +254,11 @@
         onclick: () => act('打开确认页', () => call('neartoken:open')),
       }, '打开确认页'),
       el('button', { disabled: !!pendingAct, onclick: () => copy(p.verificationUriComplete) }, '复制链接'),
+      el('button', {
+        class: 'ghost',
+        disabled: !!pendingAct,
+        onclick: () => { load().catch(() => {}) },
+      }, '我已确认，立即刷新'),
       el('button', {
         class: 'ghost',
         disabled: !!pendingAct,
@@ -641,6 +647,77 @@
   $('disconnect').addEventListener('click', () => {
     act('断开连接', () => call('neartoken:disconnect'))
   })
+
+  // ---------- 检查更新 ----------
+
+  /** cmp 比两段版本号：a 比 b 新返回正数。只认数字段，够用了。 */
+  function cmpVersion(a, b) {
+    const pa = String(a).split(/[.-]/).map((x) => parseInt(x, 10) || 0)
+    const pb = String(b).split(/[.-]/).map((x) => parseInt(x, 10) || 0)
+    for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+      const d = (pa[i] || 0) - (pb[i] || 0)
+      if (d) return d
+    }
+    return 0
+  }
+
+  /**
+   * loadLatest 取 npm 上的最新版本。
+   *
+   * 页面自己查不了，插件会把结果写成 page/latest.js；这里用 script 引入，
+   * 加 ?t= 破缓存，所以点一次「检查更新」就是现问一次。
+   */
+  function loadLatest() {
+    return new Promise((resolve) => {
+      const s = document.createElement('script')
+      s.src = 'latest.js?t=' + Date.now()
+      s.onload = () => resolve(typeof self.NEARTOKEN_LATEST === 'string' ? self.NEARTOKEN_LATEST : '')
+      s.onerror = () => resolve('')
+      document.head.append(s)
+    })
+  }
+
+  let checking = false
+  async function checkUpdate() {
+    if (checking) return
+    checking = true
+    const btn = $('updates')
+    const note = $('update-note')
+    const was = btn.textContent
+    btn.disabled = true
+    btn.textContent = '检查中…'
+    note.hidden = true
+    const latest = await loadLatest()
+    const mine = self.NEARTOKEN_VERSION || ''
+    checking = false
+    btn.disabled = false
+    btn.textContent = was
+    if (!latest) {
+      note.className = 'update-note warn'
+      note.textContent = '没查到最新版本：插件还没联网拉过一次，稍后再试。'
+      note.hidden = false
+      return
+    }
+    if (mine && cmpVersion(latest, mine) > 0) {
+      note.className = 'update-note new'
+      note.textContent = '有新版本 v' + latest + '（当前 v' + mine + '）'
+      const link = el('a', {
+        class: 'link',
+        href: 'https://github.com/Fish-under-sea/magpie-neartoken/releases',
+        target: '_blank',
+        rel: 'noreferrer',
+        style: 'margin-left:8px',
+      }, '去下载 ↗')
+      note.append(link)
+      note.hidden = false
+      return
+    }
+    note.className = 'update-note'
+    note.textContent = '已是最新 v' + (mine || latest)
+    note.hidden = false
+  }
+
+  $('updates').addEventListener('click', checkUpdate)
 
   // ---------- 画图 ----------
 

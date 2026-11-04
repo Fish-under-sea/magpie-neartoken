@@ -181,6 +181,33 @@ async function catalog(disabled = new Set()) {
  * 所以这里不推数据、只落一个文件：`<script src="groups.js?t=…">` 一引就有。
  * 写不进去（插件目录只读）就跳过，页面退回它自己的说明。
  */
+/**
+ * stampLatest 把 npm 上的最新版本写进 page/latest.js。
+ *
+ * 页面自己查不了（沙箱禁联网），但插件能：这里顺手问一次 registry，页面
+ * 「检查更新」时加载这个脚本就知道新不新。一分钟内不重复问。
+ */
+let latestAskedAt = 0
+async function stampLatest() {
+  if (Date.now() - latestAskedAt < 60_000) return
+  latestAskedAt = Date.now()
+  try {
+    const res = await fetch('https://registry.npmjs.org/@fish-under-sea%2Fmagpie-neartoken/latest', {
+      headers: { accept: 'application/json' },
+    })
+    if (!res.ok) return
+    const body = await res.json()
+    const v = typeof body?.version === 'string' ? body.version.trim() : ''
+    if (!v) return
+    writeFileSync(
+      join(here, 'page', 'latest.js'),
+      'self.NEARTOKEN_LATEST = ' + JSON.stringify(v) + '\nself.NEARTOKEN_LATEST_AT = ' + Date.now() + '\n',
+      'utf8',
+    )
+  } catch {
+    /* 问不到就保持原样：页面会说「没查到」 */
+  }
+}
 function writeGroups(groups) {
   try {
     const js = 'self.NEARTOKEN_GROUPS = ' + JSON.stringify(groups) + '\nself.NEARTOKEN_GROUPS_AT = ' + Date.now() + '\n'
@@ -272,6 +299,7 @@ export default async function neartoken(input, options) {
       ],
       /** 余额：站点钱包端点，按 magpie 的用量卡显示。 */
       async usage(getAuth) {
+        await stampLatest()
         const auth = await getAuth()
         const key = auth?.access || auth?.key
         if (!key) throw new Error('还没有连接 NearToken')
@@ -322,6 +350,7 @@ export default async function neartoken(input, options) {
        * @returns {Promise<Record<string, object>>}
        */
       async models() {
+        await stampLatest()
         return catalog(disabled)
       },
     },

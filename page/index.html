@@ -14,11 +14,14 @@
       <h1>NearToken</h1>
       <p class="sub" id="site">neartoken.cc</p>
     </div>
-    <span class="chip ver" id="version" title="插件版本">v—</span>
-    <a class="ghost link" id="updates" href="https://github.com/Fish-under-sea/magpie-neartoken/releases" target="_blank" rel="noreferrer">检查更新</a>
-    <span class="chip" id="status"><span class="dot"></span><span id="status-text">正在读取</span></span>
-    <button class="ghost" id="disconnect" hidden>断开连接</button>
+    <div class="actions">
+      <span class="chip ver" id="version" title="插件版本">v—</span>
+      <button class="ghost" id="updates" type="button">检查更新</button>
+      <span class="chip" id="status"><span class="dot"></span><span id="status-text">正在读取</span></span>
+      <button class="ghost" id="disconnect" type="button" hidden>断开连接</button>
+    </div>
   </header>
+  <p class="update-note" id="update-note" hidden></p>
   <main id="view" aria-live="polite">
     <div class="card"><p class="brief">正在读取 NearToken 的状态…</p></div>
   </main>
