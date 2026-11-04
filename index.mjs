@@ -97,18 +97,41 @@ function text(quota, cur) {
 }
 
 /** 倍率的写法：0.1 → 0.1，1 → 1。 */
-function ratioText(v) {
-  return String(Math.round(v * 10000) / 10000)
+const ratioText = (v) => String(Math.round(v * 10000) / 10000)
+
+/** ratioOf 是分组倍率，没给就是 0。 */
+const ratioOf = (ratios, name) => (Number(ratios?.[name]) > 0 ? Number(ratios[name]) : 0)
+
+/** 站点自己的约定：带 -c 后缀的模型工具调用不可靠，一律不给。 */
+/**
+ * kindOf 按站点给的字段判断一个模型属于哪一类。
+ *
+ * 站点在 /api/pricing 里已经标好了端点类型和分组名，不需要猜模型名字：
+ *   image-generation → 生图，openai-video → 视频（omni / sd2.0 / sd2.5 /
+ *   minimax-h3 都是这一类，名字里一个视频关键词都没有），分组里的 TTS /
+ *   ASR / Suno → 语音，向量模型分组 → 向量，其余 → 对话。
+ */
+function kindOf(row) {
+  const ends = Array.isArray(row?.supported_endpoint_types) ? row.supported_endpoint_types : []
+  const groups = Array.isArray(row?.enable_groups) ? row.enable_groups.join(' ') : ''
+  const text = (String(row?.model_name || '') + ' ' + groups + ' ' + String(row?.description || '')).toLowerCase()
+  if (ends.includes('image-generation')) return 'image'
+  if (ends.includes('openai-video') || /(^|[-_])video([-_]|$)|veo|seedance|sora|kling/i.test(text)) return 'video'
+  if (/tts|text-to-speech|asr|speech|whisper|suno|audio|语音|转文字/i.test(text)) return 'audio'
+  if (/embedding|embed|rerank|向量/i.test(text)) return 'embedding'
+  return 'chat'
 }
 
-/** 生图模型的名字词。 */
-const DRAWS = ['image', 'imagen', 'imagine', 'dall-e', 'flux', 'seedream', 'cogview', 'stable-diffusion', 'sdxl', 'wanx', 'kolors', 'hidream', 'banana', 'midjourney', 'mj-', 'qwen-image']
-/** 视频模型的名字词。 */
-const FILMS = ['veo', 'sora', 'kling', 'seedance', 'hailuo', 'vidu', 'pixverse', 'runway', 'luma', 'wan2', 'wanx-video', 'minimax-video', 'movie', 'video', 't2v', 'i2v']
-/** 既不聊也不画不拍的名字。 */
-const SKIP = ['embedding', 'embed-', 'text-embedding', 'tts', 'transcribe', 'asr', 'rerank', 'moderation', 'whisper', 'speech']
-
-const hasWord = (id, words) => words.some((w) => id.toLowerCase().includes(w))
+/** kindOutput 是 magpie 的 capabilities.output：分区靠它认。 */
+function kindOutput(kind) {
+  switch (kind) {
+    case 'image': return { image: true, text: true }
+    case 'video': return { video: true, text: true }
+    case 'audio': return { audio: true, text: true }
+    case 'embedding': return { embedding: true, text: true }
+    default: return { text: true }
+  }
+}
 
 /**
  * 目录：把 /api/pricing 展开成 magpie 的模型表。
@@ -118,22 +141,18 @@ const hasWord = (id, words) => words.some((w) => id.toLowerCase().includes(w))
  * 按那一行走那一组——这就是"模型后面跟着它的分组"。
  */
 async function catalog(disabled = new Set()) {
-  // 同时把「全部分组」抄一份给页面：页面在沙箱里发不出网络请求，但能加载自己
-  // 目录下的脚本，所以这里写 page/groups.js，模型广场按它重绘。
   const groupsOut = new Map()
   const env = await call('/api/pricing')
   const rows = Array.isArray(env?.data) ? env.data : []
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
   const ratios = env?.group_ratio && typeof env.group_ratio === 'object' ? env.group_ratio : {}
+  // 完整快照给模型广场：页面按它一比一重绘站点 /pricing
+  writePricing(env)
   const out = {}
   for (const row of rows) {
     const model = String(row?.model_name ?? '').trim()
-    if (!model || hasWord(model, SKIP) || model.toLowerCase().endsWith('-c')) continue
-    const ends = Array.isArray(row?.supported_endpoint_types) ? row.supported_endpoint_types : []
-    const chat = ends.length === 0 || ends.some((e) => ['openai', 'openai-response', 'anthropic', 'gemini'].includes(e))
-    const drawer = hasWord(model, DRAWS) || ends.includes('image-generation')
-    const film = hasWord(model, FILMS)
-    if (!chat && !drawer && !film) continue
+    if (!model) continue
+    const kind = kindOf(row)
     const all = Array.isArray(row?.enable_groups) && row.enable_groups.length ? row.enable_groups : ['']
     // 先按「全部分组」计数（关掉的也算），模型广场要显示它有多少个模型
     for (const raw of all) {
@@ -147,7 +166,7 @@ async function catalog(disabled = new Set()) {
     for (const raw of groups) {
       const group = String(raw ?? '').trim()
       const ref = group && refs[group] ? String(refs[group]) : ''
-      const ratio = group && Number(ratios[group]) > 0 ? Number(ratios[group]) : 0
+      const ratio = ratioOf(ratios, group)
       const id = ref ? `${ref}::${model}` : model
       const label = group ? (ratio > 0 ? `${group} ${ratioText(ratio)}x` : group) + ' · ' + model : model
       out[id] = {
@@ -158,35 +177,91 @@ async function catalog(disabled = new Set()) {
           output: Number(row?.max_tokens) > 0 ? Number(row.max_tokens) : 0,
         },
         ...(ref ? { headers: { 'x-neartoken-group': ref } } : {}),
+        // 站点自己的分类，交给 magpie 的四个分区（图像/视频/语音/向量）
+        ...(kind === 'chat' ? {} : { kind }),
         capabilities: {
           toolcall: true,
-          ...(drawer ? { output: { image: true, text: true } } : {}),
-          ...(film ? { output: { video: true, text: true } } : {}),
+          output: kindOutput(kind),
         },
       }
     }
   }
   writeGroups([...groupsOut.values()].map((g) => ({
     ...g,
-    ratio: Number(ratios[g.name]) > 0 ? Number(ratios[g.name]) : 0,
+    ratio: ratioOf(ratios, g.name),
     ref: refs[g.name] ? String(refs[g.name]) : '',
   })).sort((a, b) => a.name.localeCompare(b.name, 'zh')))
   return out
 }
 
 /**
- * writeGroups 把分组表写成 page/groups.js，给沙箱里的页面用。
+ * writeGroups 把分组表写成 page/groups.js；writePricing 把整份站点目录写成
+ * page/pricing.js，给沙箱里的页面用。
  *
  * 页面发不出网络请求（CSP connect-src 'none'），但能加载自己目录下的脚本，
- * 所以这里不推数据、只落一个文件：`<script src="groups.js?t=…">` 一引就有。
- * 写不进去（插件目录只读）就跳过，页面退回它自己的说明。
+ * 所以这里不推数据、只落文件：`<script src="pricing.js?t=…">` 一引就有。
+ * 写不进去（插件目录只读）就跳过，页面用包内那份静态快照。
  */
+function writeGroups(groups) {
+  try {
+    const js = 'self.NEARTOKEN_GROUPS = ' + JSON.stringify(groups) + '\nself.NEARTOKEN_GROUPS_AT = ' + Date.now() + '\n'
+    writeFileSync(join(here, 'page', 'groups.js'), js, 'utf8')
+  } catch {
+    /* 只读安装：页面自己会说没拿到明细 */
+  }
+}
+
 /**
- * stampLatest 把 npm 上的最新版本写进 page/latest.js。
- *
- * 页面自己查不了（沙箱禁联网），但插件能：这里顺手问一次 registry，页面
- * 「检查更新」时加载这个脚本就知道新不新。一分钟内不重复问。
+ * writePricing 把 /api/pricing 原样裁成模型广场需要的形状，写成 page/pricing.js。
+ * 与包内那份静态快照同形状，页面优先用这份（实时），静态那份只是首次兜底。
  */
+function writePricing(env) {
+  try {
+    const keep = ['description', 'tags', 'icon', 'vendor_id', 'enable_groups', 'supported_endpoint_types',
+      'model_ratio', 'model_price', 'completion_ratio', 'cache_ratio', 'create_cache_ratio',
+      'quota_type', 'billing_mode', 'billing_expr', 'context_window', 'max_tokens',
+      'input_modalities', 'reasoning_levels']
+    // 包内快照里带了一批站点 /pricing 页面的描述与运行状态（/api/pricing 没给）。
+    // 实时刷新时把它们并回来，别让刷新把首屏说明冲掉。
+    const extra = new Map()
+    try {
+      const old = readFileSync(join(here, 'page', 'pricing.js'), 'utf8')
+      const raw = old.slice(old.indexOf('=') + 1).trim().replace(/;\s*$/, '')
+      const prev = JSON.parse(raw)
+      for (const m of prev?.models || []) {
+        const x = {}
+        for (const k of ['description', 'status', 'latency', 'throughput']) if (m[k] !== undefined) x[k] = m[k]
+        if (Object.keys(x).length) extra.set(m.name, x)
+      }
+    } catch { /* 没有旧快照就只用 API 字段 */ }
+    const models = (Array.isArray(env?.data) ? env.data : []).map((m) => {
+      const name = String(m?.model_name ?? '')
+      const o = { name }
+      for (const k of keep) if (m[k] !== undefined && m[k] !== null && m[k] !== '') o[k] = m[k]
+      // API 里没有 description 时，用页面快照里的那段说明
+      if (!o.description && extra.get(name)?.description) o.description = extra.get(name).description
+      return Object.assign(o, extra.get(name) || {})
+    })
+    const snap = {
+      at: Date.now(),
+      source: 'https://neartoken.cc/api/pricing',
+      version: env?.pricing_version ?? '',
+      models,
+      groups: env?.group_ratio ?? {},
+      refs: env?.group_refs ?? {},
+      notes: env?.usable_group ?? {},
+      auto: env?.auto_groups ?? [],
+      vendors: env?.vendors ?? [],
+      endpoints: env?.supported_endpoint ?? {},
+    }
+    writeFileSync(join(here, 'page', 'pricing.js'),
+      '// 由插件运行时从 /api/pricing 写入\nself.NEARTOKEN_PRICING = ' + JSON.stringify(snap) + '\n', 'utf8')
+  } catch {
+    /* 只读安装：用包内静态快照 */
+  }
+}
+
+/** stampLatest 把 npm 上的最新版本写进 page/latest.js，一分钟内不重复问。 */
 let latestAskedAt = 0
 async function stampLatest() {
   if (Date.now() - latestAskedAt < 60_000) return
@@ -206,14 +281,6 @@ async function stampLatest() {
     )
   } catch {
     /* 问不到就保持原样：页面会说「没查到」 */
-  }
-}
-function writeGroups(groups) {
-  try {
-    const js = 'self.NEARTOKEN_GROUPS = ' + JSON.stringify(groups) + '\nself.NEARTOKEN_GROUPS_AT = ' + Date.now() + '\n'
-    writeFileSync(join(here, 'page', 'groups.js'), js, 'utf8')
-  } catch {
-    /* 只读安装：页面自己会说没拿到明细 */
   }
 }
 

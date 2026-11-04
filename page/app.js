@@ -219,9 +219,8 @@
           if (key !== 'home' && view.configured && !windows.has(span)) {
             call('neartoken:usage', { range: span }).then((w) => { windows.set(span, w); render() }).catch(showError)
           }
-          if (key === 'market' && !groupSnapshot) {
-            loadGroups().then((got) => { if (got) render() })
-          }
+          // 模型广场的数据在 page/pricing.js（包内快照 + 插件运行时覆盖），
+          // 页面加载时就已就位，不需要再动态取。
         },
       }, label)))
   }
@@ -421,68 +420,253 @@
     await loadGroups(true)
     render()
   }
-  /** 分组落在哪一类：低价 / 满血 / 图片 / 视频 / 语音 / 向量 / 其他。 */
-  function bucketOf(name) {
-    const n = String(name || '')
-    if (/生图|图片|image|画/i.test(n)) return '图片'
-    if (/视频|video/i.test(n)) return '视频'
-    if (/语音|tts|asr|转写|whisper|speech/i.test(n)) return '语音'
-    if (/向量|embedding/i.test(n)) return '向量'
-    if (/低价/.test(n)) return '低价'
-    if (/满血|官key|pro/i.test(n)) return '满血'
-    return '其他'
-  }
-  const BUCKET_ORDER = ['低价', '满血', '图片', '视频', '语音', '向量', '其他']
+    // ---------- 模型广场：一比一复刻 neartoken.cc/pricing ----------
 
-  /** 模型广场：按站点返回的分组重绘，分组即为开关。 */
+  let marketQuery = ''
+  let marketGroup = ''
+  let marketKind = 'all'
+  let marketUnit = 'M'
+  let marketMode = 'standard'
+  let marketSort = 'default'
+  let marketLayout = 'grid'
+  const marketVendors = new Set()
+  const MARKET_KINDS = [['all', '全部'], ['chat', '对话'], ['image', '生图'], ['video', '视频'], ['audio', '语音'], ['embedding', '向量']]
+
+  /** pricing 是包内静态快照（插件运行时会把实时目录覆盖进同一个文件）。 */
+  function pricing() {
+    const p = self.NEARTOKEN_PRICING
+    return p && Array.isArray(p.models) && p.models.length ? p : null
+  }
+
+  /** marketKindOf 与 index.mjs 的分类同源：按站点端点判，不猜名字。 */
+  function marketKindOf(m) {
+    const ends = m?.supported_endpoint_types || []
+    const text = [m?.name, (m?.enable_groups || []).join(' '), m?.description].join(' ').toLowerCase()
+    if (ends.includes('image-generation')) return 'image'
+    if (ends.includes('openai-video') || /(^|[-_])video([-_]|$)|veo|seedance|sora|kling/i.test(text)) return 'video'
+    if (/tts|text-to-speech|asr|speech|whisper|suno|audio|语音|转文字/i.test(text)) return 'audio'
+    if (/embedding|embed|rerank|向量/i.test(text)) return 'embedding'
+    return 'chat'
+  }
+
+  function vendorOf(id) {
+    const v = (pricing()?.vendors || []).find((x) => String(x.id) === String(id))
+    return v ? v.name : '其他'
+  }
+
+  /** groupBadge 把 [低价][满血] Claude 原生 拆成站点那种彩色小标签。 */
+  function groupBadge(name) {
+    const parts = String(name || '').match(/\[[^\]]+\]/g) || []
+    const rest = String(name || '').replace(/\[[^\]]+\]/g, '').trim()
+    const words = parts.map((p) => p.slice(1, -1))
+    const colorOf = (w) => {
+      if (/低价|反重力|神秘|自有|国模/i.test(w)) return 'green'
+      if (/满血|原生|特惠/i.test(w)) return 'red'
+      if (/促销|生图|Kiro|灵车/i.test(w)) return 'pink'
+      if (/备用|官Key|官key|CC|Argon|GPT Pro|视频|向量/i.test(w)) return 'blue'
+      return 'plain'
+    }
+    return el('span', { class: 'gb' },
+      words.map((w) => el('span', { class: 'gb-tag ' + colorOf(w), text: w })),
+      rest ? el('span', { class: 'gb-rest', text: rest }) : null)
+  }
+
+  /**
+   * priceOf 反推站点卡片上的价格：
+   *   计费表达式里 p/c/cr 的系数 × 该模型最低分组倍率（站点按最低档展示）。
+   * 没有表达式（按量计费）时系数 = model_ratio × 2、× completion_ratio、× cache_ratio。
+   * 逐个与站点 SSR 卡片核对过：gpt-6-astra ¥2/¥10/¥0.2、claude-sonnet-5-5
+   * ¥3/¥15/¥0.15、glm-5.3 ¥2/¥7/¥0.5、gpt-6.1-terra ¥0.26/¥1.3/¥0.013。
+   */
+  function priceOf(m) {
+    const expr = String(m?.billing_expr || '')
+    const coef = (v) => { const x = expr.match(new RegExp('\\b' + v + '\\s*\\*\\s*([\\d.]+)')); return x ? Number(x[1]) : null }
+    const ratios = (m?.enable_groups || []).map((g) => Number(pricing()?.groups?.[g])).filter((v) => v > 0)
+    const min = ratios.length ? Math.min(...ratios) : 1
+    // 生图/音乐这类按次计费：表达式里是 fixed(单价) × 张数，不是 token 系数
+    const fixed = expr.match(/fixed\(\s*([\d.]+)\s*\)/)
+    if (fixed) return { perCall: Number(fixed[1]) * min, perLabel: '张', tiered: true }
+    if (Number(m?.quota_type) === 1 && Number(m?.model_price) > 0) {
+      return { perCall: Number(m.model_price), perLabel: '次', tiered: false }
+    }
+    const p0 = coef('p') ?? (Number(m?.model_ratio) || 0) * 2
+    const c0 = coef('c') ?? p0 * (Number(m?.completion_ratio) || 0)
+    const r0 = coef('cr') ?? p0 * (Number(m?.cache_ratio) || 0)
+    return { input: p0 * min, output: c0 * min, cache: r0 * min, tiered: !!expr }
+  }
+
+  /** money 是价格写法：¥2、¥0.02；/1K 时把每 1M 的价除以 1000。 */
+  function money(v, unit) {
+    const x = unit === 'K' ? v / 1000 : v
+    if (!x) return '¥0'
+    const s = String(Math.round(x * 1e8) / 1e8)
+    return '¥' + s
+  }
+
+  /** modelCard 是站点那张卡：厂商、描述、计费、三档价格、分组、端点、状态、详情。 */
+  function modelCard(m) {
+    const p = priceOf(m)
+    const ends = (m?.supported_endpoint_types || []).join(', ')
+    const groups = m?.enable_groups || []
+    const shownGroups = groups.slice(0, 2)
+    const more = groups.length - shownGroups.length
+    const kind = marketKindOf(m)
+    const priceRow = p.perCall !== undefined
+      ? el('div', { class: 'mc-prices one' },
+        el('div', null, el('span', { text: '按次计费' }), el('b', { text: money(p.perCall, 'M') + ' / ' + p.perLabel })))
+      : el('div', { class: 'mc-prices' },
+        el('div', null, el('span', { text: '输入' }), el('b', { text: money(p.input, marketUnit) + ' / 1' + marketUnit })),
+        el('div', null, el('span', { text: '输出' }), el('b', { text: money(p.output, marketUnit) + ' / 1' + marketUnit })),
+        el('div', null, el('span', { text: '缓存读取' }), el('b', { text: money(p.cache, marketUnit) + ' / 1' + marketUnit })))
+    const hasStatus = m.status !== undefined && m.status !== null
+    const bars = el('span', { class: 'mc-bar' }, Array.from({ length: 10 }, (_, i) =>
+      el('i', { class: hasStatus ? (i < Math.round((Number(m.status) || 0) / 10) ? 'ok' : 'bad') : '' })))
+    return el('article', { class: 'mc' + (kind !== 'chat' ? ' mc-' + kind : '') },
+      el('div', { class: 'mc-head' },
+        el('span', { class: 'mc-vicon', text: vendorOf(m.vendor_id).slice(0, 1) }),
+        el('div', { class: 'grow' },
+          el('div', { class: 'mc-name', text: m.name }),
+          el('div', { class: 'mc-vendor', text: vendorOf(m.vendor_id) })),
+        el('button', { class: 'mc-copy', title: '复制模型 ID', onclick: () => copy(m.name) }, '⧉')),
+      el('p', { class: 'mc-desc', text: m.description || '暂无描述。' }),
+      el('div', { class: 'mc-billing ' + (p.tiered ? 'dyn' : 'flat'), text: p.tiered ? '动态计费' : '按量计费' }),
+      priceRow,
+      el('div', { class: 'mc-line' },
+        el('span', { class: 'k', text: '分组' }),
+        shownGroups.map((g) => groupBadge(g)),
+        more > 0 ? el('span', { class: 'mc-more', text: '+' + more }) : null),
+      el('div', { class: 'mc-line' },
+        el('span', { class: 'k', text: '端点' }),
+        el('span', { class: 'v', text: ends || '—' })),
+      el('div', { class: 'mc-stats' },
+        el('span', null, el('span', { class: 'k', text: '状态' }),
+          el('span', { class: 'v', text: hasStatus ? Number(m.status).toFixed(2) + '%' : '—' })),
+        bars,
+        el('span', null, el('span', { class: 'k', text: '延迟' }),
+          el('span', { class: 'v', text: m.latency || '—s' })),
+        el('span', null, el('span', { class: 'k', text: '吞吐' }),
+          el('span', { class: 'v', text: m.throughput || '—t/s' }))),
+      el('div', { class: 'mc-foot' },
+        el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '详情 ›')))
+  }
+
+  /** 站点 /pricing 首屏的推荐顺序（抓自它的服务端渲染），默认排序时置顶。 */
+  const SITE_FIRST = ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6.1-terra', 'gpt-6-luna',
+    'claude-fable-5-1', 'claude-fable-5', 'claude-opus-5-5', 'claude-opus-5',
+    'claude-sonnet-5-5', 'claude-sonnet-5', 'glm-5.3']
+
+  /** filteredModels 把搜索、分组、类型、厂商筛选叠起来。 */
+  function filteredModels() {
+    const p = pricing()
+    if (!p) return []
+    let list = p.models.slice()
+    if (marketSort !== 'latest') {
+      // 默认按站点首屏顺序置顶，其余保持目录原序
+      list.sort((a, b) => {
+        const ia = SITE_FIRST.indexOf(a.name), ib = SITE_FIRST.indexOf(b.name)
+        if (ia !== -1 || ib !== -1) return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
+        return 0
+      })
+    }
+    if (marketGroup) list = list.filter((m) => (m.enable_groups || []).includes(marketGroup))
+    if (marketKind !== 'all') list = list.filter((m) => marketKindOf(m) === marketKind)
+    if (marketVendors.size) list = list.filter((m) => marketVendors.has(String(m.vendor_id)))
+    const q = marketQuery.trim().toLowerCase()
+    if (q) list = list.filter((m) => [m.name, vendorOf(m.vendor_id), m.description, m.tags,
+      (m.enable_groups || []).join(' '), (m.supported_endpoint_types || []).join(' ')].join(' ').toLowerCase().includes(q))
+    if (marketSort === 'latest') list = list.slice().reverse()
+    return list
+  }
+
+  /** refreshMarketList 只重画右侧列表，不整页 render（保住搜索框焦点）。 */
+  function refreshMarketList() {
+    const box = $('market-list')
+    const count = $('market-count')
+    if (!box) return
+    const list = filteredModels()
+    if (count) count.textContent = list.length + ' 个模型'
+    box.className = 'model-grid' + (marketLayout === 'list' ? ' as-list' : '')
+    box.replaceChildren(...(list.length ? list.map(modelCard) : [el('p', { class: 'note', text: '没有符合条件的模型。' })]))
+  }
+
+  /** marketCard 是广场整页：顶部工具条 + 左筛选 + 右卡片网格。 */
   function marketCard() {
-    const list = Array.isArray(view.groupList) && view.groupList.length ? view.groupList : groupSnapshot
-    const head = el('div', { class: 'row' },
-      el('h2', { class: 'grow', text: '分组', style: 'margin:0' }),
-      el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场 ↗'))
-    if (!list || !list.length) {
-      return card(null, head,
-        el('p', { class: 'note' },
-          '还没拿到分组表。点「重新读取」——插件会去站点拉一次 /api/pricing，',
-          '写成 page/groups.js，页面加载它就有数据（不需要宿主改动）。'),
-        el('div', { class: 'row', style: 'margin-top:10px' },
-          el('button', { class: 'ghost', onclick: () => retryGroups() }, '重新读取'),
-          el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer', style: 'align-self:center' }, '站点广场 ↗')) )
-    }
-    const buckets = new Map()
-    for (const g of list) {
-      const key = bucketOf(g?.name)
-      if (!buckets.has(key)) buckets.set(key, [])
-      buckets.get(key).push(g)
-    }
-    const parts = [head]
-    for (const key of BUCKET_ORDER) {
-      const groups = buckets.get(key)
-      if (!groups || !groups.length) continue
-      const chips = groups.map((g) => groupChip(g))
-      parts.push(el('div', { class: 'bucket' },
-        el('div', { class: 'bucket-name' }, key, el('span', { class: 'n', text: String(groups.length) })),
-        el('div', { class: 'groups' }, chips)))
-    }
+    const p = pricing()
+    const groups = Object.keys(p?.groups || {}).sort((a, b) => (p.groups[a] - p.groups[b]) || a.localeCompare(b, 'zh'))
+    const vendors = (p?.vendors || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'))
+    const search = el('input', {
+      class: 'market-search', type: 'search', placeholder: '搜索模型名称、供应商、端点或标签...',
+      value: marketQuery,
+      oninput: (e) => { marketQuery = e.target.value; refreshMarketList() },
+    })
+    const seg = (items, cur, onPick) => el('div', { class: 'market-seg' },
+      items.map(([k, label]) => el('button', {
+        'aria-pressed': String(cur === k), onclick: () => { onPick(k); render() },
+      }, label)))
+    const tools = el('div', { class: 'market-tools' },
+      seg([['standard', '标准'], ['topup', '充值']], marketMode, (k) => { marketMode = k }),
+      seg([['M', '/1M'], ['K', '/1K']], marketUnit, (k) => { marketUnit = k }),
+      el('button', { class: 'market-tool' + (marketSort === 'latest' ? ' on' : ''), onclick: () => { marketSort = marketSort === 'latest' ? 'default' : 'latest'; refreshMarketList() } }, '↑ 最新版本'),
+      el('div', { class: 'market-seg' },
+        el('button', { 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; refreshMarketList() } }, '▦'),
+        el('button', { 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; refreshMarketList() } }, '☰')))
+    const groupChips = el('div', { class: 'market-chips' },
+      el('button', {
+        class: 'market-chip' + (!marketGroup ? ' on' : ''), onclick: () => { marketGroup = ''; render() },
+      }, '所有分组'),
+      groups.map((g) => {
+        const ratio = Number(p.groups[g]) || 0
+        const on = !disabledGroups.has(g)
+        return el('div', { class: 'market-chip-wrap' + (marketGroup === g ? ' on' : '') },
+          el('button', {
+            class: 'market-chip',
+            title: '按这个分组筛选',
+            onclick: () => { marketGroup = marketGroup === g ? '' : g; render() },
+          }, groupBadge(g), ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null),
+          el('button', {
+            class: 'chip-toggle' + (on ? ' on' : ''),
+            'aria-pressed': String(on),
+            title: on ? '禁用这个分组（模型不再进 magpie）' : '启用这个分组',
+            onclick: () => toggleGroup(g),
+          }, on ? '●' : '○'))
+      }))
+    const kinds = el('div', { class: 'market-chips' },
+      MARKET_KINDS.map(([k, label]) => el('button', {
+        class: 'market-chip' + (marketKind === k ? ' on' : ''),
+        onclick: () => { marketKind = k; render() },
+      }, label)))
+    const vendorChips = el('div', { class: 'market-chips' },
+      vendors.map((v) => el('button', {
+        class: 'market-chip' + (marketVendors.has(String(v.id)) ? ' on' : ''),
+        onclick: () => {
+          const id = String(v.id)
+          if (marketVendors.has(id)) marketVendors.delete(id)
+          else marketVendors.add(id)
+          render()
+        },
+      }, v.name)))
+    const aside = el('aside', { class: 'market-aside' },
+      el('div', { class: 'ma-head' },
+        el('h3', { text: '筛选' }),
+        el('button', { class: 'link', onclick: () => { marketQuery = ''; marketGroup = ''; marketKind = 'all'; marketVendors.clear(); render() } }, '↺ 重置')),
+      el('p', { class: 'note', text: '按供应商、分组、类型和标签细化搜索模型。' }),
+      el('h4', { text: '分组' }), groupChips,
+      el('h4', { text: '类型' }), kinds,
+      el('h4', { text: '供应商' }), vendorChips)
     const off = disabledGroups.size
-    parts.push(el('p', { class: 'note', text: off
-      ? '已关掉 ' + off + ' 个分组：它们的模型不再出现在 magpie 的模型列表里。'
-      : '全部开着。点一下关掉一组，它的模型就不再出现在 magpie 的模型列表里。' }))
-    return card(null, ...parts)
-  }
-
-  /** groupChip 是一枚分组开关：站点原文组名 + 倍率 + 模型数。 */
-  function groupChip(g) {
-    const name = String(g?.name ?? '')
-    const on = !disabledGroups.has(name)
-    const ratio = Number(g?.ratio) || 0
-    const label = ratio > 0 ? name + ' ' + ratioText(ratio) + 'x' : name
-    return el('button', {
-      class: 'group-chip',
-      'aria-pressed': String(on),
-      title: g?.models ? g.models + ' 个模型' : '',
-      onclick: () => toggleGroup(name),
-    }, label, el('span', { class: 'n', text: String(g?.models || 0) }))
+    const body = el('div', { class: 'market-body' },
+      aside,
+      el('div', { class: 'market-main' },
+        el('div', { class: 'market-count', id: 'market-count', text: (p?.models?.length || 0) + ' 个模型' }),
+        el('div', { class: 'model-grid', id: 'market-list' }),
+        off ? el('p', { class: 'note', text: '已禁用 ' + off + ' 个分组，点分组右侧的小圆点可启用。' })
+          : el('p', { class: 'note', text: '点分组名按它筛选；点右侧小圆点禁用/启用分组，被禁用的模型不再进 magpie。' })))
+    const wrap = el('section', { class: 'market' },
+      el('div', { class: 'market-top' }, search, tools),
+      body)
+    // 首帧填一次列表
+    queueMicrotask(refreshMarketList)
+    return wrap
   }
 
   /** 使用日志：这个窗口里每个模型花了多少、用了多少 token。 */
