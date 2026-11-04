@@ -18,9 +18,9 @@
   const windows = new Map()
   /** 充值面：档位、渠道、当前选择。 */
   let topupInfo = null
-  /** 插件自己的开关：关掉的分组（写进 magpie 的 plugin options，provider 插件按它过滤）。 */
+  /** 插件自己的开关：关掉的模型（写进 magpie 的 plugin options，provider 插件按它过滤）。 */
   let options = {}
-  let disabledGroups = new Set()
+  let disabledModels = new Set()
   /** 当前视角：home / market / logs。 */
   let tab = 'home'
   /** 插件写下的分组快照（page/groups.js），页面加载脚本取到。 */
@@ -118,13 +118,15 @@
     }
     try {
       await bridge.ready
-      // 插件自己的开关（关掉的分组）：写在这里，provider 插件按它过滤模型
+      // 插件自己的开关：关掉的模型。默认全选（options 里没有这个字段时一个都不关）
       try {
         options = (await bridge.options.get()) || {}
       } catch {
         options = {}
       }
-      disabledGroups = new Set(Array.isArray(options.disabledGroups) ? options.disabledGroups : [])
+      const raw = options.disabledModels
+      disabledModels = Array.isArray(raw) ? new Set(raw)
+        : (typeof raw === 'string' && raw.trim() ? new Set((() => { try { return JSON.parse(raw) } catch { return [] } })()) : new Set())
       await load()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
@@ -192,7 +194,8 @@
       frag.append(tabsBar())
       if (tab === 'market') frag.append(marketCard())
       else if (tab === 'logs') frag.append(logsCard())
-      else frag.append(accountCard(), boardCard(), groupsCard(), topupCard(), providerCard())
+      else frag.append(el('div', { class: 'home-grid' },
+        accountCard(), boardCard(), topupCard(), providerCard()))
     } else {
       setStatus('未连接')
       frag.append(connectCard())
@@ -454,11 +457,32 @@
     return v ? v.name : '其他'
   }
 
-  /** groupBadge 把 [低价][满血] Claude 原生 拆成站点那种彩色小标签。 */
+  /** 第一级：模型功能。第二级：价格与品质（低价 / 满血 / 备用 / 官Key …）。 */
+  const FUNC_TAGS = [
+    ['生图', /生图|图片|image|GPT Image|Gemini.*Image/i],
+    ['视频', /视频|video|Veo|Seedance|Suno|即梦/i],
+    ['语音', /语音|TTS|ASR|转文字|合成/i],
+    ['向量', /向量|embedding|embed/i],
+    ['对话', /.*/],
+  ]
+  const PRICE_TAGS = ['低价', '满血', '促销', '备用', '官Key', '官key', '国模', '自有', '反重力', '神秘折扣', 'CC', 'Kiro', '灵车', 'Argon', 'GPT Pro', 'Claude', 'DeepSeek', 'GLM', 'Gemini', 'Kimi', 'GPT', 'Suno', 'AIS']
+
+  /** groupTags 把 [低价][生图] 生图特惠 拆成功能 / 价格 / 余下文字，供排序与重绘。 */
+  function groupTags(name) {
+    const raw = String(name || '')
+    const parts = (raw.match(/\[[^\]]+\]/g) || []).map((p) => p.slice(1, -1))
+    const rest = raw.replace(/\[[^\]]+\]/g, '').trim()
+    const all = parts.concat(rest ? [rest] : []).join(' ')
+    let func = '对话'
+    for (const [label, re] of FUNC_TAGS) { if (re.test(all)) { func = label; break } }
+    const price = parts.filter((p) => PRICE_TAGS.some((k) => p.toLowerCase().includes(k.toLowerCase())))
+    return { func, price, rest }
+  }
+
+  /** groupBadge 按「功能 → 价格 → 组名」两级重绘：功能标签在前、价格标签在后。 */
   function groupBadge(name) {
-    const parts = String(name || '').match(/\[[^\]]+\]/g) || []
-    const rest = String(name || '').replace(/\[[^\]]+\]/g, '').trim()
-    const words = parts.map((p) => p.slice(1, -1))
+    const t = groupTags(name)
+    const tone = { '生图': 'pink', '视频': 'blue', '语音': 'purple', '向量': 'teal', '对话': 'plain' }
     const colorOf = (w) => {
       if (/低价|反重力|神秘|自有|国模/i.test(w)) return 'green'
       if (/满血|原生|特惠/i.test(w)) return 'red'
@@ -467,8 +491,10 @@
       return 'plain'
     }
     return el('span', { class: 'gb' },
-      words.map((w) => el('span', { class: 'gb-tag ' + colorOf(w), text: w })),
-      rest ? el('span', { class: 'gb-rest', text: rest }) : null)
+      // 功能标签只在非对话类显示；对话是默认，不重复挂
+      t.func === '对话' ? null : el('span', { class: 'gb-tag lvl1 ' + (tone[t.func] || 'plain'), text: t.func }),
+      t.price.map((w) => el('span', { class: 'gb-tag lvl2 ' + colorOf(w), text: w })),
+      t.rest ? el('span', { class: 'gb-rest', text: t.rest }) : null)
   }
 
   /**
@@ -503,7 +529,7 @@
     return '¥' + s
   }
 
-  /** modelCard 是站点那张卡：厂商、描述、计费、三档价格、分组、端点、状态、详情。 */
+  /** modelCard：点击整张卡切换启用；高亮就是启用，只有启用的进 magpie 模型清单。 */
   function modelCard(m) {
     const p = priceOf(m)
     const ends = (m?.supported_endpoint_types || []).join(', ')
@@ -511,6 +537,7 @@
     const shownGroups = groups.slice(0, 2)
     const more = groups.length - shownGroups.length
     const kind = marketKindOf(m)
+    const on = !disabledModels.has(m.name)
     const priceRow = p.perCall !== undefined
       ? el('div', { class: 'mc-prices one' },
         el('div', null, el('span', { text: '按次计费' }), el('b', { text: money(p.perCall, 'M') + ' / ' + p.perLabel })))
@@ -521,13 +548,22 @@
     const hasStatus = m.status !== undefined && m.status !== null
     const bars = el('span', { class: 'mc-bar' }, Array.from({ length: 10 }, (_, i) =>
       el('i', { class: hasStatus ? (i < Math.round((Number(m.status) || 0) / 10) ? 'ok' : 'bad') : '' })))
-    return el('article', { class: 'mc' + (kind !== 'chat' ? ' mc-' + kind : '') },
+    return el('article', {
+      class: 'mc' + (kind !== 'chat' ? ' mc-' + kind : '') + (on ? ' on' : ' off'),
+      'aria-pressed': String(on),
+      title: on ? '已启用 · 点一下停用' : '已停用 · 点一下启用',
+      onclick: () => toggleModel(m.name),
+    },
       el('div', { class: 'mc-head' },
         el('span', { class: 'mc-vicon', text: vendorOf(m.vendor_id).slice(0, 1) }),
         el('div', { class: 'grow' },
           el('div', { class: 'mc-name', text: m.name }),
           el('div', { class: 'mc-vendor', text: vendorOf(m.vendor_id) })),
-        el('button', { class: 'mc-copy', title: '复制模型 ID', onclick: () => copy(m.name) }, '⧉')),
+        el('span', { class: 'mc-flag', text: on ? '✓ 已启用' : '○ 未启用' }),
+        el('button', {
+          class: 'mc-copy', title: '复制模型 ID',
+          onclick: (e) => { e.stopPropagation(); copy(m.name) },
+        }, '⧉')),
       el('p', { class: 'mc-desc', text: m.description || '暂无描述。' }),
       el('div', { class: 'mc-billing ' + (p.tiered ? 'dyn' : 'flat'), text: p.tiered ? '动态计费' : '按量计费' }),
       priceRow,
@@ -603,33 +639,47 @@
       items.map(([k, label]) => el('button', {
         'aria-pressed': String(cur === k), onclick: () => { onPick(k); render() },
       }, label)))
+    const total = p?.models?.length || 0
+    const allOn = disabledModels.size === 0
+    const allOff = total > 0 && disabledModels.size >= total
     const tools = el('div', { class: 'market-tools' },
+      el('div', { class: 'market-seg' },
+        el('button', {
+          'aria-pressed': String(allOn), class: allOn ? 'on' : '',
+          title: '启用全部模型', onclick: () => setAll(true),
+        }, '全选'),
+        el('button', {
+          'aria-pressed': String(allOff), class: allOff ? 'on' : '',
+          title: '停用全部模型', onclick: () => setAll(false),
+        }, '全不选')),
       seg([['standard', '标准'], ['topup', '充值']], marketMode, (k) => { marketMode = k }),
       seg([['M', '/1M'], ['K', '/1K']], marketUnit, (k) => { marketUnit = k }),
       el('button', { class: 'market-tool' + (marketSort === 'latest' ? ' on' : ''), onclick: () => { marketSort = marketSort === 'latest' ? 'default' : 'latest'; refreshMarketList() } }, '↑ 最新版本'),
       el('div', { class: 'market-seg' },
         el('button', { 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; refreshMarketList() } }, '▦'),
         el('button', { 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; refreshMarketList() } }, '☰')))
+    // 分组按两级排：先功能（生图/视频/语音/向量/对话），再价格倍率
+    const byFunc = new Map()
+    for (const g of groups) {
+      const f = groupTags(g).func
+      if (!byFunc.has(f)) byFunc.set(f, [])
+      byFunc.get(f).push(g)
+    }
+    const FUNC_ORDER = ['对话', '生图', '视频', '语音', '向量']
     const groupChips = el('div', { class: 'market-chips' },
       el('button', {
         class: 'market-chip' + (!marketGroup ? ' on' : ''), onclick: () => { marketGroup = ''; render() },
       }, '所有分组'),
-      groups.map((g) => {
-        const ratio = Number(p.groups[g]) || 0
-        const on = !disabledGroups.has(g)
-        return el('div', { class: 'market-chip-wrap' + (marketGroup === g ? ' on' : '') },
-          el('button', {
-            class: 'market-chip',
+      FUNC_ORDER.filter((f) => byFunc.has(f)).map((f) => el('div', { class: 'chip-group' },
+        el('div', { class: 'chip-group-name', text: f }),
+        el('div', { class: 'market-chips' }, byFunc.get(f).map((g) => {
+          const ratio = Number(p.groups[g]) || 0
+          return el('button', {
+            class: 'market-chip' + (marketGroup === g ? ' on' : ''),
             title: '按这个分组筛选',
             onclick: () => { marketGroup = marketGroup === g ? '' : g; render() },
-          }, groupBadge(g), ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null),
-          el('button', {
-            class: 'chip-toggle' + (on ? ' on' : ''),
-            'aria-pressed': String(on),
-            title: on ? '禁用这个分组（模型不再进 magpie）' : '启用这个分组',
-            onclick: () => toggleGroup(g),
-          }, on ? '●' : '○'))
-      }))
+          }, groupBadge(g), ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null)
+        })))))
     const kinds = el('div', { class: 'market-chips' },
       MARKET_KINDS.map(([k, label]) => el('button', {
         class: 'market-chip' + (marketKind === k ? ' on' : ''),
@@ -653,14 +703,15 @@
       el('h4', { text: '分组' }), groupChips,
       el('h4', { text: '类型' }), kinds,
       el('h4', { text: '供应商' }), vendorChips)
-    const off = disabledGroups.size
+    const off = disabledModels.size
     const body = el('div', { class: 'market-body' },
       aside,
       el('div', { class: 'market-main' },
         el('div', { class: 'market-count', id: 'market-count', text: (p?.models?.length || 0) + ' 个模型' }),
         el('div', { class: 'model-grid', id: 'market-list' }),
-        off ? el('p', { class: 'note', text: '已禁用 ' + off + ' 个分组，点分组右侧的小圆点可启用。' })
-          : el('p', { class: 'note', text: '点分组名按它筛选；点右侧小圆点禁用/启用分组，被禁用的模型不再进 magpie。' })))
+        el('p', { class: 'note', text: off
+          ? '已停用 ' + off + ' 个模型：它们不会进 magpie 的模型清单。点卡片可重新启用，或按「全选」。'
+          : '默认全选。点卡片切换启用状态，高亮 = 已启用；只有启用的模型才进 magpie 的模型清单。' })))
     const wrap = el('section', { class: 'market' },
       el('div', { class: 'market-top' }, search, tools),
       body)
@@ -693,56 +744,51 @@
         el('span', { class: 'num', text: compact(m.tokens) }),
         el('span', { class: 'num', text: m.costText || '' }),
         el('span', { class: 'num', text: Math.round((m.tokens / total) * 100) + '%' }))))
-    return card(null, head,
-      el('div', { class: 'stats' },
-        el('div', { class: 'stat' }, el('div', { class: 'k', text: '消耗' }), el('div', { class: 'v', text: data.spent })),
-        el('div', { class: 'stat' }, el('div', { class: 'k', text: '当前余额' }), el('div', { class: 'v', text: data.balance || '—' })),
-        el('div', { class: 'stat' }, el('div', { class: 'k', text: 'Token' }), el('div', { class: 'v', text: compact(data.tokens) }))),
-      table,
-      el('p', { class: 'note', text: '数字来自站点用量端点；这个窗口里没有调用就不列模型。' }))
+    const names = rows.slice(0, 8)
+    const palette = ['#5b8def', '#43b8a4', '#9b7ce0', '#54b26a', '#e0a44a', '#d47a9a', '#6fa8d6', '#c08bd0']
+    const dist = el('div', { class: 'log-dist' },
+      el('h3', { text: '按模型分布' }),
+      names.map((m, i) => el('div', { class: 'dist-row' },
+        el('div', { class: 'dist-name', title: m.model, text: m.model }),
+        el('div', { class: 'dist-track' },
+          el('i', { style: 'width:' + Math.max(2, Math.round((m.tokens / total) * 100)) + '%;background:' + palette[i % palette.length] })),
+        el('div', { class: 'dist-val', text: compact(m.tokens) + ' · ' + Math.round((m.tokens / total) * 100) + '%' }))))
+    return el('section', { class: 'logs' },
+      el('div', { class: 'logs-head' }, head),
+      el('div', { class: 'logs-body' },
+        el('div', { class: 'card' },
+          el('div', { class: 'stats' },
+            el('div', { class: 'stat' }, el('div', { class: 'k', text: '消耗' }), el('div', { class: 'v', text: data.spent })),
+            el('div', { class: 'stat' }, el('div', { class: 'k', text: '当前余额' }), el('div', { class: 'v', text: data.balance || '—' })),
+            el('div', { class: 'stat' }, el('div', { class: 'k', text: 'Token' }), el('div', { class: 'v', text: compact(data.tokens) }))),
+          table,
+          el('p', { class: 'note', text: '数字来自站点用量端点；这个窗口里没有调用就不列模型。' })),
+        el('div', { class: 'card' }, dist,
+          el('p', { class: 'note', text: '按 token 占比排，最多列前 8 个模型。' }))))
   }
-  /** 分组墙：站点原文组名 + 倍率 + 模型数，点一下启停（写进插件 options）。 */
-  function groupsCard() {
-    const list = Array.isArray(view.groupList) ? view.groupList : null
-    const head = el('div', { class: 'row' },
-      el('h2', { class: 'grow', text: '分组', style: 'margin:0' }),
-      el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场 ↗'))
-    if (!list || !list.length) {
-      return card(null, head,
-        el('p', { class: 'note' },
-          '宿主还没把分组明细交给页面。开关已经接好（写进 magpie 的 plugin options，provider 插件按它滤模型），',
-          '宿主一回 groupList，这里就是一墙可点的分组。先去 ',
-          el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场'),
-          ' 看分组与倍率。'))
-    }
-    const chips = list.map((g) => {
-      const name = String(g?.name ?? '')
-      const on = !disabledGroups.has(name)
-      const ratio = Number(g?.ratio) || 0
-      const label = ratio > 0 ? name + ' ' + ratioText(ratio) + 'x' : name
-      return el('button', {
-        class: 'group-chip',
-        'aria-pressed': String(on),
-        title: g?.models ? g.models + ' 个模型' : '',
-        onclick: () => toggleGroup(name),
-      }, label, el('span', { class: 'n', text: String(g?.models || 0) }))
-    })
-    const off = disabledGroups.size
-    return card(null, head,
-      el('div', { class: 'groups' }, chips),
-      el('p', { class: 'note', text: off
-        ? '已关掉 ' + off + ' 个分组：它们的模型不再出现在 magpie 的模型列表里。'
-        : '全部开着。点一下关掉一组，它的模型就不再出现在 magpie 的模型列表里。' }))
+  /** toggleModel 翻转一个模型的启用状态，并写回 plugin options。 */
+  async function toggleModel(name) {
+    if (!name) return
+    if (disabledModels.has(name)) disabledModels.delete(name)
+    else disabledModels.add(name)
+    refreshMarketList()
+    await saveDisabled()
   }
 
-  /** toggleGroup 翻转一个分组，并写回插件 options（provider 插件按它过滤）。 */
-  async function toggleGroup(name) {
-    if (!name) return
-    if (disabledGroups.has(name)) disabledGroups.delete(name)
-    else disabledGroups.add(name)
+  /** setAll 全选 / 全不选：双状态按钮都走这里。 */
+  async function setAll(enable) {
+    const p = pricing()
+    if (!p) return
+    if (enable) disabledModels.clear()
+    else p.models.forEach((m) => disabledModels.add(m.name))
     render()
+    await saveDisabled()
+  }
+
+  /** saveDisabled 把「关掉的模型」写进 plugin options，provider 插件按它过滤清单。 */
+  async function saveDisabled() {
     try {
-      const next = await bridge.options.set({ ...options, disabledGroups: [...disabledGroups] })
+      const next = await bridge.options.set({ ...options, disabledModels: [...disabledModels] })
       if (next && typeof next === 'object') options = next
     } catch (error) {
       showError(error)

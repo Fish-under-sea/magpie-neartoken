@@ -33,7 +33,9 @@
 }
 .market-tool.on { color: var(--nt-ink); border-color: var(--nt-accent); }
 
-.market-body { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 14px; align-items: start; }
+.market-body { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 14px; align-items: start; }
+.market { width: 100%; }
+.model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
 
 .market-aside {
   position: sticky; top: 10px; max-height: calc(100vh - 130px); overflow-y: auto;
@@ -81,10 +83,24 @@
 .model-grid.as-list { grid-template-columns: 1fr; }
 
 .mc {
-  display: flex; flex-direction: column; min-width: 0;
+  display: flex; flex-direction: column; min-width: 0; cursor: pointer;
   padding: 12px; border: 1px solid var(--nt-line); border-radius: 12px;
-  background: rgba(255,255,255,.02);
+  background: rgba(255,255,255,.02); transition: border-color .12s, background .12s, opacity .12s;
 }
+.mc:hover { border-color: var(--nt-accent); }
+.mc.on { border-color: var(--nt-accent); background: var(--nt-accent-soft); }
+.mc.off { opacity: .48; }
+.mc.off:hover { opacity: .8; }
+.mc-flag { flex: none; font-size: 9.5px; color: var(--nt-muted); white-space: nowrap; }
+.mc.on .mc-flag { color: var(--nt-accent); font-weight: 600; }
+
+/* 两级标签：功能在前（饱和色），价格/品质在后（柔和色） */
+.gb-tag.lvl1 { font-weight: 700; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
+.gb-tag.lvl2 { opacity: .82; }
+.gb-tag.purple { background: #7b52b8; }
+.gb-tag.teal { background: #2f8f8a; }
+.chip-group { width: 100%; margin: 2px 0 4px; }
+.chip-group-name { font-size: 10px; color: var(--nt-faint); margin: 6px 0 3px; letter-spacing: .04em; }
 .mc-image { border-color: rgba(139,79,158,.5); }
 .mc-video { border-color: rgba(214,140,60,.5); }
 .mc-audio { border-color: rgba(63,111,168,.5); }
@@ -131,7 +147,20 @@
 .mc-bar i.bad { background: #d08a3c; }
 .mc-foot { margin-top: 8px; text-align: right; }
 
-@media (max-width: 620px) {
+@media (max-width: 900px) {
   .market-body { grid-template-columns: 1fr; }
   .market-aside { position: static; max-height: none; }
+  .logs-body { grid-template-columns: 1fr; }
 }
+
+/* 使用日志：两栏铺满 */
+.logs { width: 100%; }
+.logs-head > .row { padding: 12px 14px; border: 1px solid var(--nt-line); border-radius: 12px; margin-bottom: 12px; }
+.logs-body { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.logs-body > .card { margin: 0; }
+.log-dist h3 { font-size: 12px; margin: 0 0 12px; }
+.dist-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 92px; gap: 8px; align-items: center; margin: 8px 0; font-size: 10.5px; }
+.dist-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nt-muted); }
+.dist-track { height: 8px; background: rgba(255,255,255,.05); border-radius: 5px; overflow: hidden; }
+.dist-track i { display: block; height: 100%; border-radius: 5px; }
+.dist-val { text-align: right; font-family: var(--nt-code); color: var(--nt-muted); font-variant-numeric: tabular-nums; }

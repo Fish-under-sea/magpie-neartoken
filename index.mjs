@@ -140,7 +140,7 @@ function kindOutput(kind) {
  * 「站点原文组名 + 倍率 + 模型」。每行带自己的 x-neartoken-group 头，请求
  * 按那一行走那一组——这就是"模型后面跟着它的分组"。
  */
-async function catalog(disabled = new Set()) {
+async function catalog(disabledGroups = new Set(), disabledModels = new Set()) {
   const groupsOut = new Map()
   const env = await call('/api/pricing')
   const rows = Array.isArray(env?.data) ? env.data : []
@@ -151,7 +151,7 @@ async function catalog(disabled = new Set()) {
   const out = {}
   for (const row of rows) {
     const model = String(row?.model_name ?? '').trim()
-    if (!model) continue
+    if (!model || disabledModels.has(model)) continue
     const kind = kindOf(row)
     const all = Array.isArray(row?.enable_groups) && row.enable_groups.length ? row.enable_groups : ['']
     // 先按「全部分组」计数（关掉的也算），模型广场要显示它有多少个模型
@@ -161,7 +161,7 @@ async function catalog(disabled = new Set()) {
       const had = groupsOut.get(g)
       groupsOut.set(g, { name: g, ratio: 0, models: (had?.models || 0) + 1, ref: '' })
     }
-    const groups = all.filter((g) => !disabled.has(String(g ?? '').trim()))
+    const groups = all.filter((g) => !disabledGroups.has(String(g ?? '').trim()))
     if (!groups.length) continue
     for (const raw of groups) {
       const group = String(raw ?? '').trim()
@@ -285,21 +285,23 @@ async function stampLatest() {
 }
 
 export default async function neartoken(input, options) {
-  // 页面写进来的开关：关掉的分组，它们的模型不再出现在 magpie 的列表里。
-  // 走的是 magpie 的 plugin options（页面 magpie.options.set），不碰宿主代码。
-  const disabled = (() => {
-    const raw = options?.disabledGroups
-    if (Array.isArray(raw)) return new Set(raw.filter((g) => typeof g === 'string'))
+  // 页面写进来的开关：关掉的分组，以及关掉的模型。
+  // 走 magpie 的 plugin options（页面 magpie.options.set），不碰宿主代码。
+  // 默认全选：options 里没有 disabledModels 时，一个都不关。
+  const asSet = (raw) => {
+    if (Array.isArray(raw)) return new Set(raw.filter((x) => typeof x === 'string'))
     if (typeof raw === 'string' && raw.trim()) {
       try {
         const parsed = JSON.parse(raw)
-        return new Set(Array.isArray(parsed) ? parsed.filter((g) => typeof g === 'string') : [])
+        return new Set(Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [])
       } catch {
         return new Set()
       }
     }
     return new Set()
-  })()
+  }
+  const disabledGroups = asSet(options?.disabledGroups)
+  const disabledModels = asSet(options?.disabledModels)
   return {
     auth: {
       provider: PROVIDER_ID,
@@ -418,7 +420,7 @@ export default async function neartoken(input, options) {
        */
       async models() {
         await stampLatest()
-        return catalog(disabled)
+        return catalog(disabledGroups, disabledModels)
       },
     },
   }

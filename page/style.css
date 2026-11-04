@@ -36,10 +36,16 @@ html, body {
 }
 
 .wrap {
-  max-width: 760px;
-  margin: 0 auto;
+  max-width: none;
+  width: 100%;
+  margin: 0;
   padding: 20px 22px 48px;
 }
+
+/* 首页铺满：两张卡一行，随窗口宽度伸缩 */
+.home-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.home-grid > .card { margin: 0; }
+@media (max-width: 720px) { .home-grid { grid-template-columns: 1fr; } }
 
 /* 顶部：品牌 + 连接状态。整页只这里允许一点装饰。 */
 .head {
