@@ -408,7 +408,11 @@
     if (!info) return el('section', { class: 'card home-wide tp-wide' }, el('p', { class: 'note', text: '正在读取充值档位…' }))
     if (info.unavailable) return el('section', { class: 'card home-wide tp-wide' }, el('p', { class: 'note', text: info.unavailable }))
     const options = Array.isArray(info.options) && info.options.length ? info.options : []
-    const methods = Array.isArray(info.methods) ? info.methods : []
+    const methods = Array.isArray(info.methods) ? info.methods.slice() : []
+    // 微信支付即便站点没给也补一个灰色占位，撑住右侧视觉空白
+    if (!methods.some((m) => /wxpay|wechat|weixin/i.test(String(m?.type || '')))) {
+      methods.push({ type: 'wxpay', name: '微信支付' })
+    }
     const cur = info.currency || '￥'
     const amount = pick.amount || Number(pick.custom || 0)
     const method = (pick.method && methods.some((m) => m.type === pick.method && m.type === 'alipay')) ? pick.method
@@ -433,47 +437,46 @@
         el('span', { class: 'tp-pay', text: discount ? cur + payable(v) + ' · 节省 ' + saved(v) : cur + v }),
         discount ? el('span', { class: 'tp-off', text: discount }) : null)
     }))
-    const custom = el('div', { class: 'tp-custom' },
-      el('label', { class: 'tp-label', text: '自定义金额' }),
-      el('div', { class: 'tp-custom-row' },
-        el('label', { class: 'field tp-field' },
-          el('span', { class: 'cur', text: cur }),
-          el('input', {
-            type: 'text', inputmode: 'numeric', placeholder: '输入金额', value: pick.custom,
-            'aria-label': '自定义金额',
-            oninput: (e) => { pick.custom = e.target.value.replace(/[^\d]/g, ''); pick.amount = null; render() },
-          })),
-        el('div', { class: 'tp-due' }, el('span', { text: '待支付金额：' }), el('b', { text: cur + (amount || 0) }))))
-    const payMethods = el('div', null,
-      el('div', { class: 'tp-label', text: '付款方式' }),
-      el('div', { class: 'tp-methods' }, methods.map((m) => {
-        // 站点当前只有支付宝可用；其余支付方式置灰并标明，不给点也不给选
-        const usable = m.type === 'alipay'
-        const on = usable && m.type === method
-        return el('button', {
-          class: 'tp-method' + (on ? ' on' : '') + (usable ? '' : ' tp-off-method'),
-          'aria-pressed': String(on), disabled: !usable,
-          title: usable ? m.name : '暂无此支付方式',
-          onclick: usable ? () => { pick.method = m.type; render() } : null,
-        },
-          el('span', { class: 'tp-micon ' + (m.type === 'alipay' ? 'ali' : 'wx'), text: m.type === 'alipay' ? '支' : '微' }),
-          el('b', { text: usable ? m.name : m.name + ' · 暂无此支付方式' }))
-      })),
-      el('p', { class: 'note', text: '其他支付方式请联系站长', style: 'margin:6px 0 0' }))
-    const redeem = el('div', { class: 'tp-redeem' },
-      el('label', { class: 'tp-label', text: '🎁 有兑换码吗？' }),
-      el('div', { class: 'tp-custom-row' },
+    const customRow = el('div', { class: 'tp-custom-row' },
+      el('label', { class: 'field tp-field' },
+        el('span', { class: 'cur', text: cur }),
         el('input', {
-          class: 'tp-input', type: 'text', placeholder: '输入您的兑换码',
-          oninput: (e) => { pick.redeem = e.target.value },
-        }),
-        el('button', { class: 'ghost', onclick: () => showNotice('兑换额度需要宿主提供兑换端点，可在站点钱包页兑换。') }, '兑换额度')))
+          type: 'text', inputmode: 'numeric', placeholder: '输入金额', value: pick.custom,
+          'aria-label': '自定义金额',
+          oninput: (e) => { pick.custom = e.target.value.replace(/[^\d]/g, ''); pick.amount = null; render() },
+        })),
+      el('div', { class: 'tp-due' }, el('span', { text: '待支付金额：' }), el('b', { text: cur + (amount || 0) })))
+    const methodButtons = el('div', { class: 'tp-methods' }, methods.map((m) => {
+      // 站点当前只有支付宝可用；微信支付置灰占位，撑住右侧视觉空白
+      const usable = m.type === 'alipay'
+      const on = usable && m.type === method
+      return el('button', {
+        class: 'tp-method' + (on ? ' on' : '') + (usable ? '' : ' tp-off-method'),
+        'aria-pressed': String(on), disabled: !usable,
+        title: usable ? m.name : '暂无此支付渠道',
+        onclick: usable ? () => { pick.method = m.type; render() } : null,
+      },
+        el('span', { class: 'tp-micon ' + (m.type === 'alipay' ? 'ali' : 'wx'), text: m.type === 'alipay' ? '支' : '微' }),
+        el('b', { text: m.name }),
+        usable ? null : el('span', { class: 'tp-na', text: '暂无此支付渠道' }))
+    }))
+    const redeemRow = el('div', { class: 'tp-custom-row' },
+      el('input', {
+        class: 'tp-input', type: 'text', placeholder: '输入您的兑换码',
+        oninput: (e) => { pick.redeem = e.target.value },
+      }),
+      el('button', { class: 'ghost', onclick: () => showNotice('兑换额度需要站点提供兑换端点，可在站点钱包页兑换。') }, '兑换额度'))
     const foot = el('p', { class: 'note', text: '付完 5 分钟内余额会自动刷新；订单与发票在站点的钱包页。' })
-    // 跨整行的大卡：左栏金额，右栏付款方式与兑换码，高度按内容自然展开
+    // 显式 2 列 × 3 行网格：两列的标签行、内容行、输入行逐行对齐，
+    // 兑换码框与「输入金额」框天然平行；横向堆叠不超出卡片宽度。
     const body = el('div', { class: 'tp-body' },
-      el('div', { class: 'tp-col' },
-        el('div', { class: 'tp-label', text: '金额' }), tiles, custom),
-      el('div', { class: 'tp-col' }, payMethods, redeem))
+      el('div', { class: 'tp-cell' }, el('div', { class: 'tp-label', text: '金额' })),
+      el('div', { class: 'tp-cell' }, el('div', { class: 'tp-label', text: '付款方式' })),
+      el('div', { class: 'tp-cell' }, tiles),
+      el('div', { class: 'tp-cell' }, methodButtons,
+        el('p', { class: 'note', text: '其他支付方式请联系站长', style: 'margin:6px 0 0' })),
+      el('div', { class: 'tp-cell' }, el('div', { class: 'tp-label', text: '自定义金额' }), customRow),
+      el('div', { class: 'tp-cell' }, el('div', { class: 'tp-label', text: '🎁 有兑换码吗？' }), redeemRow))
     return el('section', { class: 'card home-wide tp-wide' }, head, body, foot)
   }
 
@@ -816,13 +819,34 @@
         el('a', { class: 'link', href: affURL('https://neartoken.cc/pricing'), target: '_blank', rel: 'noreferrer' }, '详情 ›')))
   }
 
+  /**
+   * versionKey 把模型名里的版本号抽成可比较的数字串（gpt-6.1 > gpt-6 > gpt-5.6，
+   * claude-opus-4-8 > 4-7）。站点 /api/pricing 没有 created_at，
+   * 这版按版本号降序作为「最新版本」的可实时计算口径，不依赖写死名单。
+   */
+  function versionKey(name) {
+    const s = String(name || '').toLowerCase()
+    const nums = (s.match(/\d+(?:\.\d+)?/g) || []).map(Number)
+    return nums.length ? nums : [-1]
+  }
+  function byVersionDesc(a, b) {
+    const x = versionKey(a.name), y = versionKey(b.name)
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+      const d = (y[i] ?? 0) - (x[i] ?? 0)
+      if (d) return d
+    }
+    return a.name.localeCompare(b.name)
+  }
+
   /** filteredModels 把搜索、分组、类型、厂商筛选叠起来。 */
   function filteredModels() {
     const p = pricing()
     if (!p) return []
     let list = p.models.slice()
-    if (marketSort !== 'latest') {
-      // 按实时数据归类：LLM 走 vendor 系列（Claude→GPT→Gemini→Grok→Kimi→GLM→DS→Qwen），
+    if (marketSort === 'latest') {
+      list.sort(byVersionDesc)
+    } else {
+      // 按实时数据归类：LLM 走 vendor 系列（Claude→GPT→Gemini→Grok→Kimi→GLM→Qwen→DS），
       // 功能模型排在后面按 图片→视频→音频→向量。不用模型名正则，快照更新即跟随。
       list.sort((a, b) => {
         const ra = modelRank(a), rb = modelRank(b)
@@ -835,7 +859,6 @@
     const q = marketQuery.trim().toLowerCase()
     if (q) list = list.filter((m) => [m.name, vendorOf(m.vendor_id), m.description, m.tags,
       (m.enable_groups || []).join(' '), (m.supported_endpoint_types || []).join(' ')].join(' ').toLowerCase().includes(q))
-    if (marketSort === 'latest') list = list.slice().reverse()
     return list
   }
 
@@ -908,10 +931,15 @@
         }, '全不选')),
       seg([['standard', '标准'], ['topup', '充值']], marketMode, (k) => { marketMode = k }),
       seg([['M', '/1M'], ['K', '/1K']], marketUnit, (k) => { marketUnit = k }),
-      el('button', { class: 'market-tool' + (marketSort === 'latest' ? ' on' : ''), onclick: () => { marketSort = marketSort === 'latest' ? 'default' : 'latest'; refreshMarketList() } }, '↑ 最新版本'),
+      el('button', {
+        class: 'market-tool' + (marketSort === 'latest' ? ' on' : ''),
+        'aria-pressed': String(marketSort === 'latest'),
+        title: '按模型版本号降序（站点暂无上架时间字段）',
+        onclick: () => { marketSort = marketSort === 'latest' ? 'default' : 'latest'; render() },
+      }, '↑ 最新版本'),
       el('div', { class: 'market-seg' },
-        el('button', { 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; refreshMarketList() } }, '▦'),
-        el('button', { 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; refreshMarketList() } }, '☰')))
+        el('button', { 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; render() } }, '▦'),
+        el('button', { 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; render() } }, '☰')))
     // 价格档在前、功能档在后；这是列表里的「往上」，不是标签内前后权重
     const llmBands = BAND_ORDER.map((name) => ({
       name, tone: name === '低价' ? 'low' : '',
@@ -944,12 +972,13 @@
           ? eggGroups.map(chipOf)
           : [el('span', { class: 'market-chip none', text: '暂无' })])),
       llmBands.map(bandEl), funcBands.map(bandEl))
-    const kinds = el('div', { class: 'market-chips' },
+    // 类型 / 供应商在有限宽度内横向堆叠（分组栏仍保持竖排）
+    const kinds = el('div', { class: 'market-chips chips-row' },
       MARKET_KINDS.map(([k, label]) => el('button', {
         class: 'market-chip' + (marketKind === k ? ' on' : ''),
         onclick: () => { marketKind = k; render() },
       }, label)))
-    const vendorChips = el('div', { class: 'market-chips' },
+    const vendorChips = el('div', { class: 'market-chips chips-row' },
       vendors.map((v) => el('button', {
         class: 'market-chip' + (marketVendors.has(String(v.id)) ? ' on' : ''),
         onclick: () => {

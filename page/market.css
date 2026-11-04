@@ -53,6 +53,9 @@
 .market-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 /* 左侧筛选栏一律竖排：每个分组/chip 占一行，从上往下读 */
 .market-aside .market-chips { flex-direction: column; flex-wrap: nowrap; gap: 6px; align-items: flex-start; }
+/* 类型/供应商在左栏有限宽度内横向堆叠，不超出、不撑宽侧栏 */
+.market-aside .market-chips.chips-row { flex-direction: row; flex-wrap: wrap; gap: 5px; align-items: center; max-width: 100%; }
+.market-aside .chips-row .market-chip { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 
 .market-chip-wrap { position: relative; display: inline-flex; align-items: center; }
 .market-chip {
@@ -87,7 +90,16 @@
    卡片区刚好容得下两张卡；最小列宽 430px 保证固定落 2 列，
    窗口更宽时才自动增到 3、4 列，不会把卡片挤窄。 */
 .model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr)); gap: 10px; align-items: stretch; }
-.model-grid.as-list { grid-template-columns: 1fr; }
+.model-grid.as-list { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+/* 列表模式：压缩成紧凑行，隐藏描述/状态条/端点等非核心信息 */
+.model-grid.as-list .mc { padding: 8px 12px; min-height: 0; }
+.model-grid.as-list .mc-desc,
+.model-grid.as-list .mc-stats,
+.model-grid.as-list .mc-line:nth-of-type(2),
+.model-grid.as-list .mc-detail { display: none; }
+.model-grid.as-list .mc-billing { margin: 4px 0; }
+.model-grid.as-list .mc-prices { margin-bottom: 6px; }
+.model-grid.as-list .mc-line { margin-top: 4px; }
 
 .mc {
   display: flex; flex-direction: column; min-width: 0; cursor: pointer;
@@ -121,9 +133,31 @@
 .tp-head h2 { font-size: 14px; }
 /* 添加资金大卡：跨整行、两栏铺开，高度按内容自然展开 */
 .tp-wide { padding: 18px 20px 20px; }
-.tp-body { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 26px; margin-top: 4px; }
-.tp-col > .tp-label:first-child { margin-top: 0; }
+/* 2 列 × 3 行显式网格：每行的左右单元等高，兑换码框与输入金额框平行对齐 */
+.tp-body { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); column-gap: 26px; row-gap: 0; margin-top: 4px; }
+.tp-cell { min-width: 0; }
+.tp-body > .tp-cell:nth-child(3), .tp-body > .tp-cell:nth-child(4) { padding-bottom: 8px; }
+.tp-label { display: block; font-size: 10.5px; color: var(--nt-muted); margin: 12px 0 8px; }
+.tp-body > .tp-cell:first-child > .tp-label, .tp-body > .tp-cell:nth-child(2) > .tp-label { margin-top: 0; }
 .tp-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tp-methods { display: flex; flex-direction: column; gap: 8px; }
+.tp-method { display: flex; align-items: center; gap: 8px; width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--nt-line); border-radius: 10px; background: rgba(255,255,255,.02); color: var(--nt-ink); font-size: 12px; }
+.tp-method .tp-na { margin-left: auto; font-size: 10px; color: var(--nt-muted); }
+.tp-method[aria-pressed="true"] { border-color: var(--nt-accent); background: var(--nt-accent-soft); }
+.tp-method.tp-off-method { opacity: .5; cursor: not-allowed; color: var(--nt-muted); background: rgba(255,255,255,.02); }
+.tp-method.tp-off-method .tp-micon { filter: grayscale(1); }
+.tp-micon { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; flex: 0 0 auto; }
+.tp-micon.ali { background: #1677ff; }
+.tp-micon.wx { background: #07c160; }
+.tp-custom-row { display: flex; align-items: center; gap: 10px; }
+.tp-field { height: 36px; flex: 0 0 auto; }
+.tp-field input { width: 100%; font-size: 13px; }
+.tp-due { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 36px; padding: 0 11px; border: 1px solid var(--nt-line); border-radius: 9px; font-size: 11px; color: var(--nt-muted); }
+.tp-due b { color: var(--nt-ink); font-family: var(--nt-code); font-size: 13px; }
+.tp-input { flex: 1; min-width: 0; height: 36px; padding: 0 11px; border: 1px solid var(--nt-line); border-radius: 9px; background: rgba(0,0,0,.2); color: var(--nt-ink); font-size: 12px; }
+.tp-wide > .note { margin-top: 14px; }
+@media (max-width: 860px) { .tp-body { grid-template-columns: minmax(0, 1fr); } .tp-cell { padding-bottom: 8px; } }
+@media (max-width: 620px) { .tp-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .tp-tile {
   position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   min-height: 64px; padding: 10px 12px; text-align: left;
@@ -133,25 +167,6 @@
 .tp-tile .tp-pay { font-size: 10px; color: var(--nt-muted); }
 .tp-tile .tp-off { position: absolute; right: 8px; top: 8px; font-size: 9.5px; color: #4cc38a; }
 .tp-tile[aria-pressed="true"] { border-color: var(--nt-accent); background: var(--nt-accent-soft); box-shadow: inset 0 0 0 1px var(--nt-accent); }
-.tp-label { display: block; font-size: 10.5px; color: var(--nt-muted); margin: 12px 0 6px; }
-.tp-custom-row { display: flex; align-items: center; gap: 10px; }
-.tp-field { height: 36px; }
-.tp-field input { width: 100%; font-size: 13px; }
-.tp-due { flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 36px; padding: 0 11px; border: 1px solid var(--nt-line); border-radius: 9px; font-size: 11px; color: var(--nt-muted); }
-.tp-due b { color: var(--nt-ink); font-family: var(--nt-code); font-size: 13px; }
-.tp-methods { display: flex; gap: 8px; flex-wrap: wrap; }
-.tp-method { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border: 1px solid var(--nt-line); border-radius: 10px; background: rgba(255,255,255,.02); color: var(--nt-ink); font-size: 12px; }
-.tp-method[aria-pressed="true"] { border-color: var(--nt-accent); background: var(--nt-accent-soft); }
-.tp-method.tp-off-method { opacity: .45; cursor: not-allowed; color: var(--nt-muted); background: rgba(255,255,255,.02); }
-.tp-method.tp-off-method .tp-micon { filter: grayscale(1); }
-.tp-micon { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; }
-.tp-micon.ali { background: #1677ff; }
-.tp-micon.wx { background: #07c160; }
-.tp-redeem { border-top: 1px solid var(--nt-line); margin-top: 14px; padding-top: 4px; }
-.tp-input { flex: 1; height: 36px; padding: 0 11px; border: 1px solid var(--nt-line); border-radius: 9px; background: rgba(0,0,0,.2); color: var(--nt-ink); font-size: 12px; }
-.tp-wide > .note { margin-top: 14px; }
-@media (max-width: 860px) { .tp-body { grid-template-columns: 1fr; gap: 6px; } }
-@media (max-width: 620px) { .tp-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* 推荐计划长条卡 */
 .rf { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
