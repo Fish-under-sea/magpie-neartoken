@@ -117,7 +117,7 @@ const hasWord = (id, words) => words.some((w) => id.toLowerCase().includes(w))
  * 「站点原文组名 + 倍率 + 模型」。每行带自己的 x-neartoken-group 头，请求
  * 按那一行走那一组——这就是"模型后面跟着它的分组"。
  */
-async function catalog() {
+async function catalog(disabled = new Set()) {
   const env = await call('/api/pricing')
   const rows = Array.isArray(env?.data) ? env.data : []
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
@@ -131,7 +131,9 @@ async function catalog() {
     const drawer = hasWord(model, DRAWS) || ends.includes('image-generation')
     const film = hasWord(model, FILMS)
     if (!chat && !drawer && !film) continue
-    const groups = Array.isArray(row?.enable_groups) && row.enable_groups.length ? row.enable_groups : ['']
+    const all = Array.isArray(row?.enable_groups) && row.enable_groups.length ? row.enable_groups : ['']
+    const groups = all.filter((g) => !disabled.has(String(g ?? '').trim()))
+    if (!groups.length) continue
     for (const raw of groups) {
       const group = String(raw ?? '').trim()
       const ref = group && refs[group] ? String(refs[group]) : ''
@@ -157,7 +159,22 @@ async function catalog() {
   return out
 }
 
-export default async function neartoken() {
+export default async function neartoken(input, options) {
+  // 页面写进来的开关：关掉的分组，它们的模型不再出现在 magpie 的列表里。
+  // 走的是 magpie 的 plugin options（页面 magpie.options.set），不碰宿主代码。
+  const disabled = (() => {
+    const raw = options?.disabledGroups
+    if (Array.isArray(raw)) return new Set(raw.filter((g) => typeof g === 'string'))
+    if (typeof raw === 'string' && raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw)
+        return new Set(Array.isArray(parsed) ? parsed.filter((g) => typeof g === 'string') : [])
+      } catch {
+        return new Set()
+      }
+    }
+    return new Set()
+  })()
   return {
     auth: {
       provider: PROVIDER_ID,
@@ -274,7 +291,7 @@ export default async function neartoken() {
        * @returns {Promise<Record<string, object>>}
        */
       async models() {
-        return catalog()
+        return catalog(disabled)
       },
     },
   }

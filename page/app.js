@@ -18,6 +18,9 @@
   const windows = new Map()
   /** 充值面：档位、渠道、当前选择。 */
   let topupInfo = null
+  /** 插件自己的开关：关掉的分组（写进 magpie 的 plugin options，provider 插件按它过滤）。 */
+  let options = {}
+  let disabledGroups = new Set()
   const pick = { amount: null, method: null, custom: '' }
   /** 正在等宿主的哪个动作。 */
   let pendingAct = ''
@@ -98,6 +101,13 @@
     }
     try {
       await bridge.ready
+      // 插件自己的开关（关掉的分组）：写在这里，provider 插件按它过滤模型
+      try {
+        options = (await bridge.options.get()) || {}
+      } catch {
+        options = {}
+      }
+      disabledGroups = new Set(Array.isArray(options.disabledGroups) ? options.disabledGroups : [])
       await load()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
@@ -161,7 +171,7 @@
       frag.append(pendingCard())
     } else if (view.configured) {
       setStatus('已连接', 'on')
-      frag.append(accountCard(), boardCard(), topupCard(), providerCard())
+      frag.append(accountCard(), boardCard(), groupsCard(), topupCard(), providerCard())
     } else {
       setStatus('未连接')
       frag.append(connectCard())
@@ -328,6 +338,59 @@
       el('p', { class: 'note', text: '付完 5 分钟内余额会自动刷新；订单与发票在站点的钱包页。' }),
     ]
     return card('充值', ...parts)
+  }
+
+  /** 分组墙：站点原文组名 + 倍率 + 模型数，点一下启停（写进插件 options）。 */
+  function groupsCard() {
+    const list = Array.isArray(view.groupList) ? view.groupList : null
+    const head = el('div', { class: 'row' },
+      el('h2', { class: 'grow', text: '分组', style: 'margin:0' }),
+      el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场 ↗'))
+    if (!list || !list.length) {
+      return card(null, head,
+        el('p', { class: 'note' },
+          '宿主还没把分组明细交给页面。开关已经接好（写进 magpie 的 plugin options，provider 插件按它滤模型），',
+          '宿主一回 groupList，这里就是一墙可点的分组。先去 ',
+          el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场'),
+          ' 看分组与倍率。'))
+    }
+    const chips = list.map((g) => {
+      const name = String(g?.name ?? '')
+      const on = !disabledGroups.has(name)
+      const ratio = Number(g?.ratio) || 0
+      const label = ratio > 0 ? name + ' ' + ratioText(ratio) + 'x' : name
+      return el('button', {
+        class: 'group-chip',
+        'aria-pressed': String(on),
+        title: g?.models ? g.models + ' 个模型' : '',
+        onclick: () => toggleGroup(name),
+      }, label, el('span', { class: 'n', text: String(g?.models || 0) }))
+    })
+    const off = disabledGroups.size
+    return card(null, head,
+      el('div', { class: 'groups' }, chips),
+      el('p', { class: 'note', text: off
+        ? '已关掉 ' + off + ' 个分组：它们的模型不再出现在 magpie 的模型列表里。'
+        : '全部开着。点一下关掉一组，它的模型就不再出现在 magpie 的模型列表里。' }))
+  }
+
+  /** toggleGroup 翻转一个分组，并写回插件 options（provider 插件按它过滤）。 */
+  async function toggleGroup(name) {
+    if (!name) return
+    if (disabledGroups.has(name)) disabledGroups.delete(name)
+    else disabledGroups.add(name)
+    render()
+    try {
+      const next = await bridge.options.set({ ...options, disabledGroups: [...disabledGroups] })
+      if (next && typeof next === 'object') options = next
+    } catch (error) {
+      showError(error)
+    }
+  }
+
+  /** ratioText 是倍率的写法：0.1 → 0.1，1 → 1。 */
+  function ratioText(v) {
+    return String(Math.round(v * 10000) / 10000)
   }
 
   /** 供应商卡：说明模型已经交给 magpie 了。 */
