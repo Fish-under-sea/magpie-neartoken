@@ -81,10 +81,23 @@
 ```
 /
 ├── package.json        插件清单：magpie.page / magpie.icon / magpie.calls
-├── page/               页面本体：index.html · app.js · style.css · icon.svg · icon.png
+├── index.mjs           provider 插件：设备授权、模型目录、余额、分组路由
+├── scripts/            stamp.mjs：把 package.json 版本写进 page/version.js
+└── page/               页面本体：index.html · app.js · style.css · market.css
+                        · pricing.js（目录快照）· star.png（侧边栏）· icon.png（包图标）
 ├── LICENSE
 └── README.md
 ```
+
+**三个图标各管一处，不要混用：**
+
+| 文件 | 用在哪 | 清单字段 |
+| --- | --- | --- |
+| `page/icon.png` | 插件包图标、页面头部 mark、供应商卡图标 | `magpie.icon`（及 `index.mjs` 的 `auth.icon`） |
+| `page/star.png` | **只有侧边栏**那个标签 | `magpie.page.icon` |
+| `page/icon.svg` | 包内备用线稿，不参与清单 | — |
+
+站点 logo 就是 `page/icon.png`，侧边栏要的是空心五角星，两者是分开的；改图标时别把 `magpie.icon` 一起改掉。
 
 ## 设计取舍
 
