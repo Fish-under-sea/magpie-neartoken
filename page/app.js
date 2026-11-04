@@ -86,6 +86,8 @@
   let lastError = ''
   function showError(error) {
     const said = String(error && error.message ? error.message : error)
+    // options 写入限流由 saveDisabled 自己合并重试，不用挂到页脚
+    if (/once a second at most|sets its options/i.test(said)) return
     lastError = said
     // 宿主侧仍在建 key+URL 供应商时，会撞上 magpie 的内置订阅 id。
     // 这不是页面能修的，给一句能照做的指引。
@@ -205,6 +207,17 @@
     if (pendingAct) frag.append(el('p', { class: 'note', text: '正在处理：' + pendingAct }))
     body.replaceChildren(frag)
     if (view.pending) paintCountdown()
+    // 首页四张卡等高：以账户卡为基准锁死高度，多出来的内容在卡片内滚动
+    if (tab === 'home' && view.configured) equalizeHome()
+  }
+
+  /** equalizeHome 量第一张卡（账户）的高度，锁到同组所有卡上。 */
+  function equalizeHome() {
+    const cards = document.querySelectorAll('.home-grid > .card')
+    if (cards.length < 2) return
+    const h = Math.round(cards[0].getBoundingClientRect().height)
+    if (!h) return
+    cards.forEach((c) => { c.style.height = h + 'px' })
   }
 
   /** tabsBar 是三个视角：原本界面、模型广场、使用日志。 */
@@ -432,6 +445,10 @@
   let marketMode = 'standard'
   let marketSort = 'default'
   let marketLayout = 'grid'
+  let logQuery = ''
+  let logGroup = ''
+  let logKind = 'all'
+  let logExpanded = false
   const marketVendors = new Set()
   const MARKET_KINDS = [['all', '全部'], ['chat', '对话'], ['image', '生图'], ['video', '视频'], ['audio', '语音'], ['embedding', '向量']]
 
@@ -467,7 +484,14 @@
   ]
   const PRICE_TAGS = ['低价', '满血', '促销', '备用', '官Key', '官key', '国模', '自有', '反重力', '神秘折扣', 'CC', 'Kiro', '灵车', 'Argon', 'GPT Pro', 'Claude', 'DeepSeek', 'GLM', 'Gemini', 'Kimi', 'GPT', 'Suno', 'AIS']
 
-  /** groupTags 把 [低价][生图] 生图特惠 拆成功能 / 价格 / 余下文字，供排序与重绘。 */
+  /** 第二级里的首标签次序：满血 > 官Key > 低价 > 其他。满血排在低价前面。 */
+  const LEAD_ORDER = ['满血', '官Key', '官key', '低价', '促销', '备用', '国模', '自有', '反重力', '神秘折扣']
+  const leadRank = (w) => {
+    const i = LEAD_ORDER.findIndex((k) => w.toLowerCase().includes(k.toLowerCase()))
+    return i === -1 ? 99 : i
+  }
+
+  /** groupTags 把 [低价][满血] GPT Pro 2 拆成功能 / 价格 / 余下文字，供排序与重绘。 */
   function groupTags(name) {
     const raw = String(name || '')
     const parts = (raw.match(/\[[^\]]+\]/g) || []).map((p) => p.slice(1, -1))
@@ -475,17 +499,21 @@
     const all = parts.concat(rest ? [rest] : []).join(' ')
     let func = '对话'
     for (const [label, re] of FUNC_TAGS) { if (re.test(all)) { func = label; break } }
-    const price = parts.filter((p) => PRICE_TAGS.some((k) => p.toLowerCase().includes(k.toLowerCase())))
-    return { func, price, rest }
+    // 官Key / 官key 走官方通道，自动补一个「满血」标签
+    const official = /官Key|官key/i.test(all)
+    let price = parts.filter((p) => PRICE_TAGS.some((k) => p.toLowerCase().includes(k.toLowerCase())))
+    if (official && !price.some((p) => p.includes('满血'))) price = ['满血'].concat(price)
+    price.sort((a, b) => leadRank(a) - leadRank(b))
+    return { func, price, rest, lead: price[0] || '' }
   }
 
-  /** groupBadge 按「功能 → 价格 → 组名」两级重绘：功能标签在前、价格标签在后。 */
+  /** groupBadge 按「功能 → 价格」两级重绘；首标签单独加 .lead 作视觉区分。 */
   function groupBadge(name) {
     const t = groupTags(name)
     const tone = { '生图': 'pink', '视频': 'blue', '语音': 'purple', '向量': 'teal', '对话': 'plain' }
     const colorOf = (w) => {
-      if (/低价|反重力|神秘|自有|国模/i.test(w)) return 'green'
       if (/满血|原生|特惠/i.test(w)) return 'red'
+      if (/低价|反重力|神秘|自有|国模/i.test(w)) return 'green'
       if (/促销|生图|Kiro|灵车/i.test(w)) return 'pink'
       if (/备用|官Key|官key|CC|Argon|GPT Pro|视频|向量/i.test(w)) return 'blue'
       return 'plain'
@@ -493,7 +521,10 @@
     return el('span', { class: 'gb' },
       // 功能标签只在非对话类显示；对话是默认，不重复挂
       t.func === '对话' ? null : el('span', { class: 'gb-tag lvl1 ' + (tone[t.func] || 'plain'), text: t.func }),
-      t.price.map((w) => el('span', { class: 'gb-tag lvl2 ' + colorOf(w), text: w })),
+      t.price.map((w, i) => el('span', {
+        class: 'gb-tag lvl2 ' + colorOf(w) + (i === 0 ? ' lead' : ''),
+        text: w,
+      })),
       t.rest ? el('span', { class: 'gb-rest', text: t.rest }) : null)
   }
 
@@ -628,7 +659,14 @@
   /** marketCard 是广场整页：顶部工具条 + 左筛选 + 右卡片网格。 */
   function marketCard() {
     const p = pricing()
-    const groups = Object.keys(p?.groups || {}).sort((a, b) => (p.groups[a] - p.groups[b]) || a.localeCompare(b, 'zh'))
+    // 先按功能分栏，栏内按首标签（满血 → 官Key → 低价 → …）再按倍率排
+    const FUNC_ORDER = ['对话', '生图', '视频', '语音', '向量']
+    const rankOf = (g) => {
+      const t = groupTags(g)
+      return (FUNC_ORDER.indexOf(t.func) === -1 ? 99 : FUNC_ORDER.indexOf(t.func)) * 1000
+        + leadRank(t.lead) * 10 + (Number(p.groups[g]) || 0)
+    }
+    const groups = Object.keys(p?.groups || {}).sort((a, b) => rankOf(a) - rankOf(b) || a.localeCompare(b, 'zh'))
     const vendors = (p?.vendors || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'))
     const search = el('input', {
       class: 'market-search', type: 'search', placeholder: '搜索模型名称、供应商、端点或标签...',
@@ -665,7 +703,6 @@
       if (!byFunc.has(f)) byFunc.set(f, [])
       byFunc.get(f).push(g)
     }
-    const FUNC_ORDER = ['对话', '生图', '视频', '语音', '向量']
     const groupChips = el('div', { class: 'market-chips' },
       el('button', {
         class: 'market-chip' + (!marketGroup ? ' on' : ''), onclick: () => { marketGroup = ''; render() },
@@ -720,7 +757,7 @@
     return wrap
   }
 
-  /** 使用日志：这个窗口里每个模型花了多少、用了多少 token。 */
+  /** 使用日志：仿站点日志页——筛选条 + 统计条 + 全宽明细表。 */
   function logsCard() {
     const data = windows.get(span)
     const seg = el('div', { class: 'seg' },
@@ -729,42 +766,76 @@
           key === 'day' ? '日' : key === 'week' ? '周' : '月')))
     const head = el('div', { class: 'row' },
       el('h2', { class: 'grow', text: '使用日志', style: 'margin:0' }), seg)
-    if (!data) return card(null, head, el('p', { class: 'note', text: '正在读取用量…' }))
+    if (!data) return el('section', { class: 'logs' }, card(null, head, el('p', { class: 'note', text: '正在读取用量…' })))
     if (!data.available) {
-      return card(null, head, el('p', { class: 'note warn', text: data.reason === 'unreachable'
-        ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' }))
+      return el('section', { class: 'logs' }, card(null, head,
+        el('p', { class: 'note warn', text: data.reason === 'unreachable'
+          ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' })))
     }
-    const rows = (data.models || []).slice().sort((a, b) => b.tokens - a.tokens)
-    const total = rows.reduce((sum, m) => sum + m.tokens, 0) || 1
-    const table = el('div', { class: 'log-table' },
-      el('div', { class: 'log-row head' },
-        el('span', { text: '模型' }), el('span', { text: 'Token' }), el('span', { text: '花费' }), el('span', { text: '占比' })),
-      rows.map((m) => el('div', { class: 'log-row' },
+    const all = (data.models || []).slice().sort((a, b) => b.tokens - a.tokens)
+    const total = all.reduce((sum, m) => sum + m.tokens, 0) || 1
+    const q = logQuery.trim().toLowerCase()
+    let rows = q ? all.filter((m) => String(m.model).toLowerCase().includes(q)) : all
+    if (logKind !== 'all') rows = rows.filter((m) => {
+      const snap = (pricing()?.models || []).find((x) => x.name === m.model)
+      return snap ? marketKindOf(snap) === logKind : logKind === 'chat'
+    })
+    if (logGroup) rows = rows.filter((m) => {
+      const snap = (pricing()?.models || []).find((x) => x.name === m.model)
+      return snap && (snap.enable_groups || []).includes(logGroup)
+    })
+    const groups = Object.keys(pricing()?.groups || {}).sort((a, b) => a.localeCompare(b, 'zh'))
+    const rangeText = span === 'day' ? '今日' : span === 'week' ? '本周' : '本月'
+    const toolbar = el('div', { class: 'logs-toolbar' },
+      el('div', { class: 'lt-field grow' }, el('span', { class: 'lt-ico', text: '▦' }),
+        el('span', { class: 'lt-range', text: rangeText + ' · 00:00 ~ 现在' })),
+      el('input', {
+        class: 'lt-input', type: 'search', placeholder: '模型名称', value: logQuery,
+        oninput: (e) => { logQuery = e.target.value; render() },
+      }),
+      el('select', { class: 'lt-select', onchange: (e) => { logGroup = e.target.value; render() } },
+        el('option', { value: '', text: '分组' }),
+        groups.map((g) => el('option', { value: g, text: g, selected: logGroup === g }))),
+      el('select', { class: 'lt-select', onchange: (e) => { logKind = e.target.value; render() } },
+        el('option', { value: 'all', text: '所有类型' }),
+        MARKET_KINDS.slice(1).map(([k, label]) => el('option', { value: k, text: label, selected: logKind === k }))),
+      el('button', { class: 'lt-btn', onclick: () => { logExpanded = !logExpanded; render() } }, logExpanded ? '收起 ▴' : '展开 ▾'))
+    const statbar = el('div', { class: 'logs-statbar' },
+      el('div', { class: 'ls-chips' },
+        el('span', { class: 'ls-chip' }, el('i', { class: 'ls-dot blue' }), '用量 ', el('b', { text: data.spent || '—' })),
+        el('span', { class: 'ls-chip' }, el('i', { class: 'ls-dot red' }), 'RPM ', el('b', { text: '0' })),
+        el('span', { class: 'ls-chip' }, el('i', { class: 'ls-dot blue' }), 'TPM ', el('b', { text: compact(data.tokens || 0) }))),
+      el('div', { class: 'ls-actions' },
+        el('button', { class: 'lt-btn', title: '10 秒刷新', onclick: () => { load().catch(() => {}) } }, '↻ 10s'),
+        el('button', { class: 'lt-btn', onclick: () => { logQuery = ''; logGroup = ''; logKind = 'all'; render() } }, '重置'),
+        el('button', { class: 'lt-btn primary', onclick: () => render() }, '搜索'),
+        el('button', { class: 'lt-btn', onclick: () => showError('逐条导出需要宿主提供日志端点。') }, '导出')))
+    const cols = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
+    const table = el('div', { class: 'logs-table' },
+      el('div', { class: 'lt-row head' }, cols.map((c) => el('span', { text: c }))),
+      rows.length ? rows.map((m) => el('div', { class: 'lt-row' },
+        el('span', { text: rangeText }),
+        el('span', { text: view.tokenName || '—' }),
         el('span', { class: 'who', title: m.model, text: m.model }),
+        el('span', { text: '—' }),
         el('span', { class: 'num', text: compact(m.tokens) }),
-        el('span', { class: 'num', text: m.costText || '' }),
-        el('span', { class: 'num', text: Math.round((m.tokens / total) * 100) + '%' }))))
-    const names = rows.slice(0, 8)
-    const palette = ['#5b8def', '#43b8a4', '#9b7ce0', '#54b26a', '#e0a44a', '#d47a9a', '#6fa8d6', '#c08bd0']
-    const dist = el('div', { class: 'log-dist' },
-      el('h3', { text: '按模型分布' }),
-      names.map((m, i) => el('div', { class: 'dist-row' },
+        el('span', { text: '—' }),
+        el('span', { class: 'num', text: m.costText || '—' }),
+        el('span', { text: '—' }),
+        el('span', { class: 'num', text: Math.round((m.tokens / total) * 100) + '%' })))
+        : el('div', { class: 'lt-empty', text: '这个筛选下没有记录。' }))
+    // 分布不再是下面的一张卡：折进「展开」，默认不占版面
+    const dist = logExpanded ? el('div', { class: 'logs-dist' },
+      rows.slice(0, 8).map((m, i) => el('div', { class: 'dist-row' },
         el('div', { class: 'dist-name', title: m.model, text: m.model }),
         el('div', { class: 'dist-track' },
-          el('i', { style: 'width:' + Math.max(2, Math.round((m.tokens / total) * 100)) + '%;background:' + palette[i % palette.length] })),
-        el('div', { class: 'dist-val', text: compact(m.tokens) + ' · ' + Math.round((m.tokens / total) * 100) + '%' }))))
+          el('i', { style: 'width:' + Math.max(2, Math.round((m.tokens / total) * 100)) + '%;background:' + ['#5b8def', '#43b8a4', '#9b7ce0', '#54b26a', '#e0a44a', '#d47a9a', '#6fa8d6', '#c08bd0'][i % 8] })),
+        el('div', { class: 'dist-val', text: compact(m.tokens) + ' · ' + Math.round((m.tokens / total) * 100) + '%' })))) : null
     return el('section', { class: 'logs' },
       el('div', { class: 'logs-head' }, head),
-      el('div', { class: 'logs-body' },
-        el('div', { class: 'card' },
-          el('div', { class: 'stats' },
-            el('div', { class: 'stat' }, el('div', { class: 'k', text: '消耗' }), el('div', { class: 'v', text: data.spent })),
-            el('div', { class: 'stat' }, el('div', { class: 'k', text: '当前余额' }), el('div', { class: 'v', text: data.balance || '—' })),
-            el('div', { class: 'stat' }, el('div', { class: 'k', text: 'Token' }), el('div', { class: 'v', text: compact(data.tokens) }))),
-          table,
-          el('p', { class: 'note', text: '数字来自站点用量端点；这个窗口里没有调用就不列模型。' })),
-        el('div', { class: 'card' }, dist,
-          el('p', { class: 'note', text: '按 token 占比排，最多列前 8 个模型。' }))))
+      toolbar, statbar, dist,
+      el('div', { class: 'logs-table-wrap' }, table),
+      el('p', { class: 'note', text: '数字来自站点用量端点，按模型汇总；站点未提供逐条流水，故「流 / 请求体大小 / 耗时」留空。' }))
   }
   /** toggleModel 翻转一个模型的启用状态，并写回 plugin options。 */
   async function toggleModel(name) {
@@ -785,14 +856,34 @@
     await saveDisabled()
   }
 
-  /** saveDisabled 把「关掉的模型」写进 plugin options，provider 插件按它过滤清单。 */
-  async function saveDisabled() {
+  /**
+   * saveDisabled 把「关掉的模型」写进 plugin options，provider 插件按它过滤清单。
+   *
+   * magpie 限制页面每秒最多写一次 options，连点卡片会被拒（"a page sets its
+   * options once a second at most"）。所以这里合并写入：1.1 秒内的多次改动只发
+   * 最后一次，正在发送时再排队补一次；限流错误不往页脚挂。
+   */
+  let saveTimer = null
+  let sending = false
+  let sendAgain = false
+  async function flushDisabled() {
+    if (sending) { sendAgain = true; return }
+    sending = true
     try {
       const next = await bridge.options.set({ ...options, disabledModels: [...disabledModels] })
       if (next && typeof next === 'object') options = next
-    } catch (error) {
-      showError(error)
+      lastError = ''
+    } catch {
+      // 写失败时保留本地状态，下一拍重试；不把限流提示挂到页脚
+      sendAgain = true
+    } finally {
+      sending = false
+      if (sendAgain) { sendAgain = false; setTimeout(flushDisabled, 1100) }
     }
+  }
+  function saveDisabled() {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => { saveTimer = null; flushDisabled() }, 1150)
   }
 
   /** ratioText 是倍率的写法：0.1 → 0.1，1 → 1。 */
