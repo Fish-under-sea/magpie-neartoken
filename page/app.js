@@ -21,6 +21,8 @@
   /** 插件自己的开关：关掉的分组（写进 magpie 的 plugin options，provider 插件按它过滤）。 */
   let options = {}
   let disabledGroups = new Set()
+  /** 当前视角：home / market / logs。 */
+  let tab = 'home'
   const pick = { amount: null, method: null, custom: '' }
   /** 正在等宿主的哪个动作。 */
   let pendingAct = ''
@@ -95,6 +97,9 @@
   // ---------- 主流程 ----------
 
   async function boot() {
+    // 预览用：?tab=market 可直接落在某个视角，生产里没这个参数就是原本界面
+    const want = new URLSearchParams(location.search).get('tab')
+    if (want === 'market' || want === 'logs' || want === 'home') tab = want
     if (!bridge || typeof bridge.call !== 'function') {
       fail('这个 magpie 还没有插件页的调用通道。')
       return
@@ -171,7 +176,10 @@
       frag.append(pendingCard())
     } else if (view.configured) {
       setStatus('已连接', 'on')
-      frag.append(accountCard(), boardCard(), groupsCard(), topupCard(), providerCard())
+      frag.append(tabsBar())
+      if (tab === 'market') frag.append(marketCard())
+      else if (tab === 'logs') frag.append(logsCard())
+      else frag.append(accountCard(), boardCard(), groupsCard(), topupCard(), providerCard())
     } else {
       setStatus('未连接')
       frag.append(connectCard())
@@ -181,6 +189,25 @@
     if (pendingAct) frag.append(el('p', { class: 'note', text: '正在处理：' + pendingAct }))
     body.replaceChildren(frag)
     if (view.pending) paintCountdown()
+  }
+
+  /** tabsBar 是三个视角：原本界面、模型广场、使用日志。 */
+  function tabsBar() {
+    const tabs = [['home', '原本界面'], ['market', '模型广场'], ['logs', '使用日志']]
+    return el('div', { class: 'tabs', role: 'tablist' },
+      tabs.map(([key, label]) => el('button', {
+        role: 'tab',
+        'aria-selected': String(tab === key),
+        class: tab === key ? 'on' : '',
+        onclick: () => {
+          if (tab === key) return
+          tab = key
+          render()
+          if (key !== 'home' && view.configured && !windows.has(span)) {
+            call('neartoken:usage', { range: span }).then((w) => { windows.set(span, w); render() }).catch(showError)
+          }
+        },
+      }, label)))
   }
 
   /** 未连接：说清会发生什么，再给一个按钮。 */
@@ -340,6 +367,103 @@
     return card('充值', ...parts)
   }
 
+  /** 分组落在哪一类：低价 / 满血 / 图片 / 视频 / 语音 / 向量 / 其他。 */
+  function bucketOf(name) {
+    const n = String(name || '')
+    if (/生图|图片|image|画/i.test(n)) return '图片'
+    if (/视频|video/i.test(n)) return '视频'
+    if (/语音|tts|asr|转写|whisper|speech/i.test(n)) return '语音'
+    if (/向量|embedding/i.test(n)) return '向量'
+    if (/低价/.test(n)) return '低价'
+    if (/满血|官key|pro/i.test(n)) return '满血'
+    return '其他'
+  }
+  const BUCKET_ORDER = ['低价', '满血', '图片', '视频', '语音', '向量', '其他']
+
+  /** 模型广场：按站点返回的分组重绘，分组即为开关。 */
+  function marketCard() {
+    const list = Array.isArray(view.groupList) ? view.groupList : null
+    const head = el('div', { class: 'row' },
+      el('h2', { class: 'grow', text: '分组', style: 'margin:0' }),
+      el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场 ↗'))
+    if (!list || !list.length) {
+      return card(null, head,
+        el('p', { class: 'note' },
+          '宿主还没把分组明细交给页面（`neartoken:state` 目前只回分组数）。'),
+        el('p', { class: 'note' },
+          '开关已接好：写进 magpie 的 plugin options，provider 插件按它过滤模型表；',
+          '宿主一回 groupList，这里就按站点分组重绘。先去 ',
+          el('a', { class: 'link', href: 'https://neartoken.cc/pricing', target: '_blank', rel: 'noreferrer' }, '站点广场'),
+          ' 看分组与倍率。'))
+    }
+    const buckets = new Map()
+    for (const g of list) {
+      const key = bucketOf(g?.name)
+      if (!buckets.has(key)) buckets.set(key, [])
+      buckets.get(key).push(g)
+    }
+    const parts = [head]
+    for (const key of BUCKET_ORDER) {
+      const groups = buckets.get(key)
+      if (!groups || !groups.length) continue
+      const chips = groups.map((g) => groupChip(g))
+      parts.push(el('div', { class: 'bucket' },
+        el('div', { class: 'bucket-name' }, key, el('span', { class: 'n', text: String(groups.length) })),
+        el('div', { class: 'groups' }, chips)))
+    }
+    const off = disabledGroups.size
+    parts.push(el('p', { class: 'note', text: off
+      ? '已关掉 ' + off + ' 个分组：它们的模型不再出现在 magpie 的模型列表里。'
+      : '全部开着。点一下关掉一组，它的模型就不再出现在 magpie 的模型列表里。' }))
+    return card(null, ...parts)
+  }
+
+  /** groupChip 是一枚分组开关：站点原文组名 + 倍率 + 模型数。 */
+  function groupChip(g) {
+    const name = String(g?.name ?? '')
+    const on = !disabledGroups.has(name)
+    const ratio = Number(g?.ratio) || 0
+    const label = ratio > 0 ? name + ' ' + ratioText(ratio) + 'x' : name
+    return el('button', {
+      class: 'group-chip',
+      'aria-pressed': String(on),
+      title: g?.models ? g.models + ' 个模型' : '',
+      onclick: () => toggleGroup(name),
+    }, label, el('span', { class: 'n', text: String(g?.models || 0) }))
+  }
+
+  /** 使用日志：这个窗口里每个模型花了多少、用了多少 token。 */
+  function logsCard() {
+    const data = windows.get(span)
+    const seg = el('div', { class: 'seg' },
+      ['day', 'week', 'month'].map((key) =>
+        el('button', { 'aria-pressed': String(span === key), onclick: () => switchSpan(key) },
+          key === 'day' ? '日' : key === 'week' ? '周' : '月')))
+    const head = el('div', { class: 'row' },
+      el('h2', { class: 'grow', text: '使用日志', style: 'margin:0' }), seg)
+    if (!data) return card(null, head, el('p', { class: 'note', text: '正在读取用量…' }))
+    if (!data.available) {
+      return card(null, head, el('p', { class: 'note warn', text: data.reason === 'unreachable'
+        ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' }))
+    }
+    const rows = (data.models || []).slice().sort((a, b) => b.tokens - a.tokens)
+    const total = rows.reduce((sum, m) => sum + m.tokens, 0) || 1
+    const table = el('div', { class: 'log-table' },
+      el('div', { class: 'log-row head' },
+        el('span', { text: '模型' }), el('span', { text: 'Token' }), el('span', { text: '花费' }), el('span', { text: '占比' })),
+      rows.map((m) => el('div', { class: 'log-row' },
+        el('span', { class: 'who', title: m.model, text: m.model }),
+        el('span', { class: 'num', text: compact(m.tokens) }),
+        el('span', { class: 'num', text: m.costText || '' }),
+        el('span', { class: 'num', text: Math.round((m.tokens / total) * 100) + '%' }))))
+    return card(null, head,
+      el('div', { class: 'stats' },
+        el('div', { class: 'stat' }, el('div', { class: 'k', text: '消耗' }), el('div', { class: 'v', text: data.spent })),
+        el('div', { class: 'stat' }, el('div', { class: 'k', text: '当前余额' }), el('div', { class: 'v', text: data.balance || '—' })),
+        el('div', { class: 'stat' }, el('div', { class: 'k', text: 'Token' }), el('div', { class: 'v', text: compact(data.tokens) }))),
+      table,
+      el('p', { class: 'note', text: '数字来自站点用量端点；这个窗口里没有调用就不列模型。' }))
+  }
   /** 分组墙：站点原文组名 + 倍率 + 模型数，点一下启停（写进插件 options）。 */
   function groupsCard() {
     const list = Array.isArray(view.groupList) ? view.groupList : null
