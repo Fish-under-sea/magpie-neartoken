@@ -557,6 +557,11 @@
   let logGroup = ''
   let logKind = 'all'
   let logExpanded = false
+  /** 日志时间范围：null 表示「今天到现在」。 */
+  let logFrom = null
+  let logTo = null
+  /** 日期弹层是否展开。 */
+  let logCalOpen = false
   const marketVendors = new Set()
   const MARKET_QUOTA = [['all', '所有模型'], ['token', '按量计费'], ['request', '按次计费'], ['task', '任务计费']]
   const MARKET_ENDPOINTS = [['all', '所有类型'], ['openai', 'Chat'], ['openai-response', 'Response'], ['anthropic', 'Anthropic'], ['gemini', 'Gemini'], ['jina-rerank', 'Rerank'], ['image-generation', '图片'], ['embedding', '嵌入'], ['openai-video', '视频']]
@@ -1489,22 +1494,100 @@
     return wrap
   }
 
-  /** 使用日志：仿站点日志页——筛选条 + 统计条 + 全宽明细表。 */
+  /** 把时间按站点格式打印：YYYY-MM-DD HH:mm:ss */
+  function fmtDT(d) {
+    const p = (n) => String(n).padStart(2, '0')
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
+  }
+  /** 当天 0 点。 */
+  function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
+  /** 当前日志区间；没设过就是今天 0 点到现在。 */
+  function logRange() {
+    const to = logTo ? new Date(logTo) : new Date()
+    const from = logFrom ? new Date(logFrom) : startOfDay(to)
+    return { from, to }
+  }
+  /** 区间折算成站点用量端点认识的粒度。 */
+  function logSpan() {
+    const { from, to } = logRange()
+    const days = (to - from) / 86400000
+    return days <= 1.2 ? 'day' : days <= 8 ? 'week' : 'month'
+  }
+
+  /** 使用日志：筛选条 + 统计条 + 明细表；日期用可用弹层选。 */
   function logsCard() {
+    const range = logRange()
+    const span = logSpan()
     const data = windows.get(span)
-    const seg = el('div', { class: 'seg' },
-      ['day', 'week', 'month'].map((key) =>
-        el('button', { 'aria-pressed': String(span === key), onclick: () => switchSpan(key) },
-          key === 'day' ? '日' : key === 'week' ? '周' : '月')))
-    const head = el('div', { class: 'row' },
-      el('h2', { class: 'grow', text: '使用日志', style: 'margin:0' }), seg)
-    if (!data) return el('section', { class: 'logs' }, card(null, head, el('p', { class: 'note', text: '正在读取用量…' })))
-    if (!data.available) {
-      return el('section', { class: 'logs' }, card(null, head,
-        el('p', { class: 'note warn', text: data.reason === 'unreachable'
-          ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' })))
+    const asInput = (d) => { const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) }
+    const applyRange = () => {
+      const f = document.getElementById('lg-from')
+      const t = document.getElementById('lg-to')
+      if (f && f.value) logFrom = new Date(f.value)
+      if (t && t.value) logTo = new Date(t.value)
+      logCalOpen = false
+      windows.delete('day'); windows.delete('week'); windows.delete('month')
+      load().catch(() => {})
+      render()
     }
-    const all = (data.models || []).slice().sort((a, b) => b.tokens - a.tokens)
+    const preset = (days) => {
+      const to = new Date()
+      const from = days === 0 ? startOfDay(to) : new Date(to.getTime() - (days - 1) * 86400000)
+      if (days > 0) from.setHours(0, 0, 0, 0)
+      logFrom = from
+      logTo = to
+      logCalOpen = false
+      windows.delete('day'); windows.delete('week'); windows.delete('month')
+      load().catch(() => {})
+      render()
+    }
+    const calPop = logCalOpen ? el('div', { class: 'lg-cal' },
+      el('div', { class: 'lg-cal-presets' },
+        el('button', { onclick: () => preset(0) }, '今天'),
+        el('button', { onclick: () => preset(7) }, '近 7 天'),
+        el('button', { onclick: () => preset(30) }, '近 30 天'),
+        el('button', { onclick: () => preset(90) }, '近 90 天')),
+      el('div', { class: 'lg-cal-fields' },
+        el('label', null, el('span', { text: '开始' }),
+          el('input', { id: 'lg-from', type: 'datetime-local', value: asInput(range.from) })),
+        el('label', null, el('span', { text: '结束' }),
+          el('input', { id: 'lg-to', type: 'datetime-local', value: asInput(range.to) }))),
+      el('div', { class: 'lg-cal-actions' },
+        el('button', { class: 'ghost', onclick: () => { logCalOpen = false; render() } }, '取消'),
+        el('button', { class: 'primary', onclick: applyRange }, '应用'))) : null
+
+    const rangeField = el('div', { class: 'lg-range' },
+      el('button', {
+        class: 'lg-range-btn' + (logCalOpen ? ' open' : ''), 'aria-expanded': String(logCalOpen),
+        title: '选择时间范围',
+        onclick: (e) => { e.stopPropagation(); logCalOpen = !logCalOpen; render() },
+      },
+        el('span', { class: 'lg-ico', text: '▦' }),
+        el('span', { class: 'lg-range-text', text: fmtDT(range.from) + ' ~ ' + fmtDT(range.to) })),
+      calPop)
+
+    const toolbar = el('div', { class: 'lg-bar' },
+      rangeField,
+      el('input', {
+        class: 'lg-input', type: 'search', placeholder: '模型名称', value: logQuery,
+        oninput: (e) => { logQuery = e.target.value },
+        onkeydown: (e) => { if (e.key === 'Enter') render() },
+      }),
+      el('select', {
+        class: 'lg-select', onchange: (e) => { logGroup = e.target.value; render() },
+      },
+        el('option', { value: '', text: '分组' }),
+        Object.keys(pricing()?.groups || {}).sort((a, b) => a.localeCompare(b, 'zh'))
+          .map((g) => el('option', { value: g, text: g, selected: logGroup === g }))),
+      el('select', {
+        class: 'lg-select', onchange: (e) => { logKind = e.target.value; render() },
+      },
+        el('option', { value: 'all', text: '所有类型' }),
+        MARKET_KINDS.slice(1).map(([k, label]) => el('option', { value: k, text: label, selected: logKind === k }))),
+      el('button', { class: 'lg-btn', title: '展开或收起分布', onclick: () => { logExpanded = !logExpanded; render() } },
+        logExpanded ? '收起 ▴' : '展开 ▾'))
+
+    const all = (data?.models || []).slice().sort((a, b) => b.tokens - a.tokens)
     const total = all.reduce((sum, m) => sum + m.tokens, 0) || 1
     const q = logQuery.trim().toLowerCase()
     let rows = q ? all.filter((m) => String(m.model).toLowerCase().includes(q)) : all
@@ -1516,37 +1599,36 @@
       const snap = (pricing()?.models || []).find((x) => x.name === m.model)
       return snap && (snap.enable_groups || []).includes(logGroup)
     })
-    const groups = Object.keys(pricing()?.groups || {}).sort((a, b) => a.localeCompare(b, 'zh'))
-    const rangeText = span === 'day' ? '今日' : span === 'week' ? '本周' : '本月'
-    const toolbar = el('div', { class: 'logs-toolbar' },
-      el('div', { class: 'lt-field grow' }, el('span', { class: 'lt-ico', text: '▦' }),
-        el('span', { class: 'lt-range', text: rangeText + ' · 00:00 ~ 现在' })),
-      el('input', {
-        class: 'lt-input', type: 'search', placeholder: '模型名称', value: logQuery,
-        oninput: (e) => { logQuery = e.target.value; render() },
-      }),
-      el('select', { class: 'lt-select', onchange: (e) => { logGroup = e.target.value; render() } },
-        el('option', { value: '', text: '分组' }),
-        groups.map((g) => el('option', { value: g, text: g, selected: logGroup === g }))),
-      el('select', { class: 'lt-select', onchange: (e) => { logKind = e.target.value; render() } },
-        el('option', { value: 'all', text: '所有类型' }),
-        MARKET_KINDS.slice(1).map(([k, label]) => el('option', { value: k, text: label, selected: logKind === k }))),
-      el('button', { class: 'lt-btn', onclick: () => { logExpanded = !logExpanded; render() } }, logExpanded ? '收起 ▴' : '展开 ▾'))
-    const statbar = el('div', { class: 'logs-statbar' },
-      el('div', { class: 'ls-chips' },
-        el('span', { class: 'ls-chip' }, el('i', { class: 'ls-dot blue' }), '用量 ', el('b', { text: data.spent || '—' })),
-        el('span', { class: 'ls-chip' }, el('i', { class: 'ls-dot red' }), 'RPM ', el('b', { text: '0' })),
-        el('span', { class: 'ls-chip' }, el('i', { class: 'ls-dot blue' }), 'TPM ', el('b', { text: compact(data.tokens || 0) }))),
-      el('div', { class: 'ls-actions' },
-        el('button', { class: 'lt-btn', title: '10 秒刷新', onclick: () => { load().catch(() => {}) } }, '↻ 10s'),
-        el('button', { class: 'lt-btn', onclick: () => { logQuery = ''; logGroup = ''; logKind = 'all'; render() } }, '重置'),
-        el('button', { class: 'lt-btn primary', onclick: () => render() }, '搜索'),
-        el('button', { class: 'lt-btn', onclick: () => showError('逐条导出需要宿主提供日志端点。') }, '导出')))
+
+    const statbar = el('div', { class: 'lg-stats' },
+      el('div', { class: 'lg-chips' },
+        el('span', { class: 'lg-chip' }, el('i', { class: 'lg-dot blue' }), '用量 ', el('b', { text: data?.spent || '¥0' })),
+        el('span', { class: 'lg-chip' }, el('i', { class: 'lg-dot red' }), 'RPM ', el('b', { text: '0' })),
+        el('span', { class: 'lg-chip' }, el('i', { class: 'lg-dot blue' }), 'TPM ', el('b', { text: compact(data?.tokens || 0) }))),
+      el('div', { class: 'lg-actions' },
+        el('button', { class: 'lg-btn', title: '每 10 秒刷新', onclick: () => { load().catch(() => {}) } }, '⟳ 10s'),
+        el('button', { class: 'lg-btn icon', title: '显示或隐藏明细', onclick: () => { logExpanded = !logExpanded; render() } }, '👁'),
+        el('button', { class: 'lg-btn', onclick: () => { logQuery = ''; logGroup = ''; logKind = 'all'; logFrom = null; logTo = null; windows.clear(); load().catch(() => {}); render() } }, '重置'),
+        el('button', { class: 'lg-btn primary', onclick: () => render() }, '搜索'),
+        el('button', { class: 'lg-btn', onclick: () => showError('站点没有导出端点，导出需要宿主支持。') }, '导出'),
+        el('button', { class: 'lg-btn', onclick: () => { logExpanded = true; render() } }, '查看')))
+
+    if (!data) {
+      return el('section', { class: 'logs' },
+        el('h2', { class: 'logs-title', text: '通用日志' }), toolbar, statbar,
+        el('p', { class: 'note', text: '正在读取用量…' }))
+    }
+    if (!data.available) {
+      return el('section', { class: 'logs' },
+        el('h2', { class: 'logs-title', text: '通用日志' }), toolbar, statbar,
+        el('p', { class: 'note warn', text: data.reason === 'unreachable' ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' }))
+    }
+
     const cols = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
-    const table = el('div', { class: 'logs-table' },
-      el('div', { class: 'lt-row head' }, cols.map((c) => el('span', { text: c }))),
-      rows.length ? rows.map((m) => el('div', { class: 'lt-row' },
-        el('span', { text: rangeText }),
+    const table = el('div', { class: 'lg-table' },
+      el('div', { class: 'lg-row head' }, cols.map((c) => el('span', { text: c }))),
+      rows.length ? rows.map((m) => el('div', { class: 'lg-row' },
+        el('span', { text: fmtDT(range.to).slice(0, 10) }),
         el('span', { text: view.tokenName || '—' }),
         el('span', { class: 'who', title: m.model, text: m.model }),
         el('span', { text: '—' }),
@@ -1555,20 +1637,22 @@
         el('span', { class: 'num', text: m.costText || '—' }),
         el('span', { text: '—' }),
         el('span', { class: 'num', text: Math.round((m.tokens / total) * 100) + '%' })))
-        : el('div', { class: 'lt-empty', text: '这个筛选下没有记录。' }))
-    // 分布不再是下面的一张卡：折进「展开」，默认不占版面
-    const dist = logExpanded ? el('div', { class: 'logs-dist' },
-      rows.slice(0, 8).map((m, i) => el('div', { class: 'dist-row' },
-        el('div', { class: 'dist-name', title: m.model, text: m.model }),
-        el('div', { class: 'dist-track' },
-          el('i', { style: 'width:' + Math.max(2, Math.round((m.tokens / total) * 100)) + '%;background:' + ['#5b8def', '#43b8a4', '#9b7ce0', '#54b26a', '#e0a44a', '#d47a9a', '#6fa8d6', '#c08bd0'][i % 8] })),
-        el('div', { class: 'dist-val', text: compact(m.tokens) + ' · ' + Math.round((m.tokens / total) * 100) + '%' })))) : null
+        : el('div', { class: 'lg-empty', text: '这个筛选下没有记录。' }))
+
+    const dist = logExpanded ? el('div', { class: 'lg-dist' },
+      rows.slice(0, 8).map((m, i2) => el('div', { class: 'lg-dist-row' },
+        el('div', { class: 'lg-dist-name', title: m.model, text: m.model }),
+        el('div', { class: 'lg-dist-track' },
+          el('i', { style: 'width:' + Math.max(2, Math.round((m.tokens / total) * 100)) + '%;background:' + ['#5b8def', '#43b8a4', '#9b7ce0', '#54b26a', '#e0a44a', '#d47a9a', '#6fa8d6', '#c08bd0'][i2 % 8] })),
+        el('div', { class: 'lg-dist-val', text: compact(m.tokens) + ' · ' + Math.round((m.tokens / total) * 100) + '%' })))) : null
+
     return el('section', { class: 'logs' },
-      el('div', { class: 'logs-head' }, head),
+      el('h2', { class: 'logs-title', text: '通用日志' }),
       toolbar, statbar, dist,
-      el('div', { class: 'logs-table-wrap' }, table),
+      el('div', { class: 'lg-table-wrap' }, table),
       el('p', { class: 'note', text: '数字来自站点用量端点，按模型汇总；站点未提供逐条流水，故「流 / 请求体大小 / 耗时」留空。' }))
   }
+
   /** toggleModel 只翻转「当前视图分组」里的启用状态，同一模型在别组不受影响。 */
   async function toggleModel(name) {
     const m = pricing()?.models.find((x) => x.name === name)
