@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.6.9**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**0.6.10**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.9.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.10.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,19 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 0.6.10 模型字段补齐与 API 方言
+
+按上游 `site/public/docs/plugins.html` 的 Model 契约逐项对齐：
+
+- `id`：每行都带模型 id（宿主按 id 取、按 name 显示）。
+- `limit: {context, output}`：来自站点 `context_window` / `max_tokens`，站点没给就是 0。
+- `capabilities.input`：由站点 `input_modalities` 映射成 `{text, image, audio, video, pdf}`；默认 `text`。
+- `capabilities.attachment`：有图片或 PDF 输入时为 true。
+- `capabilities.reasoning` + `variants: {low, medium, high}`：仅对话模型，宿主据此给出「思考强度」。
+- `api.npm`：按模型实际端点选方言——有 openai / openai-response / 图片 / 视频的用 `@ai-sdk/openai-compatible`，只挂 anthropic 的用 `@ai-sdk/anthropic`，只挂 gemini 的用 `@ai-sdk/google`。之前一律塞 openai-compatible，纯 anthropic 模型因此可能发错协议。
+
+站点没有给出 USD 单价，所以 `cost`（含缓存读写）不填——留空是契约允许的，填错会让宿主显示假价格。
 
 ## 0.6.9 模型广场改版与供应商掉出修复
 
