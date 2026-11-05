@@ -17,6 +17,7 @@ const pricingEnv = {
     {
       model_name: 'm1', vendor_id: 1, model_ratio: 1, completion_ratio: 1,
       enable_groups: ['G-cheap', 'G-key'], supported_endpoint_types: ['openai'],
+      input_modalities: ['text', 'image'], context_window: 1000000, max_tokens: 64000,
     },
     {
       model_name: 'img1', vendor_id: 1, model_ratio: 1, completion_ratio: 1,
@@ -41,6 +42,24 @@ test('模型在原生列表里只显示模型名', async () => {
   const m = await models({})
   assert.equal(m.m1.name, 'm1')
   assert.equal(m.img1.name, 'img1')
+})
+
+test('API 方言跟着端点走：纯 anthropic 模型不会被当成 openai 发', async () => {
+  const m = await models({})
+  assert.equal(m.m1.api.npm, '@ai-sdk/openai-compatible')
+  assert.equal(m.img1.api.npm, '@ai-sdk/openai-compatible')
+})
+
+test('模型字段完整：id、上下文、输入模态、附件与能力', async () => {
+  const m = await models({})
+  assert.equal(m.m1.id, 'm1')
+  assert.equal(m.m1.limit.context, 1000000)
+  assert.equal(m.m1.limit.output, 64000)
+  assert.deepEqual(m.m1.capabilities.input, { text: true, image: true, audio: false, video: false, pdf: false })
+  assert.equal(m.m1.capabilities.attachment, true)
+  assert.equal(m.m1.capabilities.toolcall, true)
+  assert.ok(m.m1.api && m.m1.api.url && m.m1.api.npm)
+  assert.equal(m.m1.status, undefined, '不能给宿主 deprecated 状态，否则会被隐藏')
 })
 
 test('对话模型声明 reasoning 与思考档位，图片模型不声明', async () => {

@@ -281,6 +281,18 @@ async function loadPricingEnv() {
   return envCache
 }
 
+/** 按模型实际支持的端点选 API 方言，决定网关用什么协议把它发出去。 */
+function npmOf(row) {
+  const ends = Array.isArray(row?.supported_endpoint_types) ? row.supported_endpoint_types.map(String) : []
+  if (ends.includes('openai') || ends.includes('openai-response') || ends.includes('image-generation') || ends.includes('openai-video')) {
+    return '@ai-sdk/openai-compatible'
+  }
+  if (ends.includes('anthropic')) return '@ai-sdk/anthropic'
+  if (ends.includes('gemini')) return '@ai-sdk/google'
+  if (ends.includes('jina-rerank') || ends.includes('embedding')) return '@ai-sdk/openai-compatible'
+  return '@ai-sdk/openai-compatible'
+}
+
 async function catalog(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map(), disabledByGroup = new Map()) {
   const groupsOut = new Map()
   const { env, status, bundled } = await loadPricingEnv()
@@ -330,9 +342,21 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
     })).sort((a, b) => (a.ratio || 1e9) - (b.ratio || 1e9))
     const main = ranked[0] || { name: '', ref: '', ratio: 0 }
     const label = model
+    const mods = Array.isArray(row?.input_modalities) && row.input_modalities.length
+      ? row.input_modalities.map((x) => String(x).toLowerCase())
+      : ['text']
+    const inputCap = {
+      text: mods.includes('text'),
+      image: mods.includes('image'),
+      audio: mods.includes('audio'),
+      video: mods.includes('video'),
+      pdf: mods.includes('pdf'),
+    }
     out[model] = {
+      // OpenCode 的 Model 形状：id + name 都要给，宿主按 id 取、按 name 显示
+      id: model,
       name: label,
-      api: { id: model, url: SITE + '/v1', npm: '@ai-sdk/openai-compatible' },
+      api: { id: model, url: SITE + '/v1', npm: npmOf(row) },
       limit: {
         context: Number(row?.context_window) > 0 ? Number(row.context_window) : 0,
         output: Number(row?.max_tokens) > 0 ? Number(row.max_tokens) : 0,
@@ -343,6 +367,9 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
       capabilities: {
         toolcall: true,
         output: kindOutput(kind),
+        // 站点给了图片/PDF 输入就允许附件，别再让宿主一律按纯文本对待
+        attachment: !!(inputCap.image || inputCap.pdf),
+        input: inputCap,
         // 对话模型声明 reasoning，配合下面的 variants，宿主才给「思考强度」档位
         ...(kind === 'chat' ? { reasoning: true } : {}),
       },
