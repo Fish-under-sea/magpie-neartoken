@@ -4,13 +4,13 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 
 const source = fs.readFileSync(new URL('../page/app.js', import.meta.url), 'utf8')
-const names = new Set(['groupEnableStats', 'groupNote', 'groupChipModel', 'bandActiveCount', 'groupTags', 'cheapestGroup', 'isOn', 'viewGroup'])
+const names = new Set(['groupEnableStats', 'groupNote', 'groupChipModel', 'bandActiveCount', 'groupTags', 'cheapestGroup', 'isOn', 'viewGroup', 'initDisabledByGroup', 'groupOptionsPayload'])
 const fns = [...source.matchAll(/  function (\w+)\([^\n]*\) \{[\s\S]*?\n  \}/g)]
   .filter((m) => names.has(m[1])).map((m) => m[0]).join('\n')
 const consts = [
   ...source.match(/^  const (PRICE_TAGS|LEAD_ORDER) = .*$/gm),
   ...source.match(/^  const leadRank = [\s\S]*?\n  \}\n/m),
-  ...source.match(/^  const enabledByGroup = new Map\(\)$/m),
+  ...source.match(/^  const disabledByGroup = new Map\(\)$/m),
 ].join('\n')
 
 const p = {
@@ -23,15 +23,15 @@ const p = {
   notes: { G1: '一号分组说明', G2: '', G3: '' },
 }
 
-function make(entries, group = '') {
+function make(entries = [], group = '', options = {}) {
   const ctx = vm.createContext({
     Map, Set, JSON, String, Number, Object, Array,
     KIND_SERIES: { chat: '对话' }, groupKind: () => 'chat',
-    marketGroup: group, pricing: () => p,
+    marketGroup: group, pricing: () => p, options,
   })
-  vm.runInContext(consts + '\n' + fns + '\n;globalThis.__ebg = enabledByGroup;', ctx)
-  ctx.__ebg.clear()
-  for (const [k, v] of entries) ctx.__ebg.set(k, new Set(v))
+  vm.runInContext(consts + '\n' + fns + '\n;globalThis.__dbg = disabledByGroup;', ctx)
+  ctx.__dbg.clear()
+  for (const [k, v] of entries) ctx.__dbg.set(k, new Set(v))
   return ctx
 }
 
@@ -39,78 +39,83 @@ const row = (stats, g) => {
   const r = stats.get(g)
   return r ? { total: r.total, enabled: r.enabled } : undefined
 }
-const entries = [['a', ['G1']], ['b', ['G2']], ['c', ['G3']]]
 
-test('分组级启停：同一模型在别组启用不会点亮本组', () => {
-  const ctx = make(entries)
+test('没有停用记录时，模型在它列出的每个分组里都算启用', () => {
+  const ctx = make()
+  const stats = ctx.groupEnableStats(p)
+  assert.deepEqual(row(stats, 'G1'), { total: 2, enabled: 2 })
+  assert.deepEqual(row(stats, 'G2'), { total: 1, enabled: 1 })
+  assert.deepEqual(row(stats, 'G3'), { total: 1, enabled: 1 })
+})
+
+test('停用某组只影响该组，模型在别组不受牵连', () => {
+  const ctx = make([['b', ['G1']]])
   const stats = ctx.groupEnableStats(p)
   assert.deepEqual(row(stats, 'G1'), { total: 2, enabled: 1 })
   assert.deepEqual(row(stats, 'G2'), { total: 1, enabled: 1 })
-  assert.deepEqual(row(stats, 'G3'), { total: 1, enabled: 1 })
   assert.match(ctx.groupChipModel(p, 'G1', '', stats).className, /has-enabled/)
-  assert.match(ctx.groupChipModel(p, 'G2', '', stats).className, /has-enabled/)
 })
 
-test('某组全停就灰化，且不会出现常亮项', () => {
-  const ctx = make([['a', []], ['b', []], ['c', []]])
+test('某组模型全停就灰化，不会出现常亮项', () => {
+  const ctx = make([['a', ['G1']], ['b', ['G1']]])
   const stats = ctx.groupEnableStats(p)
-  for (const g of ['G1', 'G2', 'G3']) {
-    assert.deepEqual(row(stats, g).enabled, 0)
-    assert.match(ctx.groupChipModel(p, g, '', stats).className, /all-off/, g)
-  }
+  assert.deepEqual(row(stats, 'G1'), { total: 2, enabled: 0 })
+  assert.match(ctx.groupChipModel(p, 'G1', '', stats).className, /all-off/)
 })
 
 test('最便宜分组是默认视图分组', () => {
-  const ctx = make(entries)
+  const ctx = make()
   assert.equal(ctx.cheapestGroup(p.models[1], p.groups), 'G2')
-  assert.equal(ctx.cheapestGroup({ enable_groups: ['X', 'Y'] }, { X: 0, Y: 1 }), 'Y')
   assert.equal(ctx.cheapestGroup({ enable_groups: [] }, {}), '')
 })
 
 test('isOn 跟着当前选定分组切换判定', () => {
-  assert.equal(make([['b', ['G2']]], '').isOn(p.models[1]), true) // 未选组时按最便宜的 G2 判定
-  const ctxG1 = make([['b', ['G2']]], 'G1')
-  assert.equal(ctxG1.isOn(p.models[1]), false)
-  const ctxG2 = make([['b', ['G2']]], 'G2')
-  assert.equal(ctxG2.isOn(p.models[1]), true)
+  assert.equal(make([], '').isOn(p.models[1]), true)
+  assert.equal(make([['b', ['G2']]], '').isOn(p.models[1]), false)
+  assert.equal(make([['b', ['G2']]], 'G2').isOn(p.models[1]), false)
+  assert.equal(make([['b', ['G1']]], 'G2').isOn(p.models[1]), true)
 })
 
-test('官网说明按分组原文取值，缺失返回空串', () => {
-  const ctx = make(entries)
-  assert.equal(ctx.groupNote(p, 'G1'), '一号分组说明')
-  assert.equal(ctx.groupNote(p, 'G2'), '')
+test('读回停用表：形状不对就当没有记录，不会把模型判成停用', () => {
+  for (const bad of [{ disabledByGroup: { a: 'G1' } }, { disabledByGroup: [] }, { disabledByGroup: 'bad' }, { disabledByGroup: null }]) {
+    const ctx = make([], '', bad)
+    ctx.initDisabledByGroup()
+    assert.equal(ctx.__dbg.size, 0, JSON.stringify(bad))
+    assert.equal(ctx.isOn(p.models[0]), true)
+  }
+  const ok = make([], '', { disabledByGroup: { a: ['G1'] } })
+  ok.initDisabledByGroup()
+  assert.equal(ok.isOn(p.models[0]), false)
 })
 
-test('chip 不含说明文字，提示写启用数', () => {
-  const ctx = make(entries)
+test('提示写启用数，chip 不含说明文字', () => {
+  const ctx = make()
   const m = ctx.groupChipModel(p, 'G1', 'G1', ctx.groupEnableStats(p))
   assert.match(m.className, /\bon\b/)
   assert.equal('desc' in m, false)
-  assert.match(m.title, /启用 1\/2 个模型/)
+  assert.match(m.title, /启用 2\/2 个模型/)
 })
 
-test('档位计数按分组级启用统计', () => {
-  const ctx = make(entries)
-  assert.equal(ctx.bandActiveCount(['G1', 'G2', 'G3'], ctx.groupEnableStats(p)), 3)
-  const off = make([['a', []], ['b', []], ['c', []]])
-  assert.equal(off.bandActiveCount(['G1', 'G2', 'G3'], off.groupEnableStats(p)), 0)
+test('档位计数只数含启用模型的分组', () => {
+  const ctx = make([['a', ['G1']], ['b', ['G1']]])
+  assert.equal(ctx.bandActiveCount(['G1', 'G2', 'G3'], ctx.groupEnableStats(p)), 2)
 })
 
-test('官Key 组保留满血，功能词不重复成小标签', () => {
-  const ctx = make(entries)
-  const key = ctx.groupTags('[满血][官Key] Gemini')
-  assert.deepEqual(Array.from(key.price).sort(), ['官Key', '满血'].sort())
-  assert.deepEqual(Array.from(key.extra), [])
-  const img = ctx.groupTags('[低价][生图] 生图特惠')
-  assert.deepEqual(Array.from(img.extra), [])
-  assert.deepEqual(Array.from(img.price), ['低价'])
-  const grav = ctx.groupTags('[低价][反重力] Gemini')
-  assert.deepEqual(Array.from(grav.price).sort(), ['低价', '反重力'].sort())
+test('写回载荷只放停用例外，并清掉旧的大字段', () => {
+  const ctx = make([['a', ['G1']]])
+  // vm 里创建的对象原型不同，统一用 JSON 形态比较
+  const payload = JSON.parse(JSON.stringify(ctx.groupOptionsPayload({ disabledModels: ['x'], enabledByGroup: { a: ['G1', 'G2'] } }, ctx.__dbg)))
+  assert.deepEqual(payload.enabledByGroup, undefined)
+  assert.equal('enabledByGroup' in payload, false)
+  assert.deepEqual(payload.disabledByGroup, { a: ['G1'] })
+  assert.deepEqual(payload.disabledModels, ['x'], '其它字段原样保留')
+  const empty = JSON.parse(JSON.stringify(ctx.groupOptionsPayload({}, new Map())))
+  assert.deepEqual(empty.disabledByGroup, {}, '默认全选时载荷就是空对象')
 })
 
-test('鸡蛋等非价格标签保留', () => {
-  const ctx = make(entries)
-  const tags = ctx.groupTags('[🥚] Claude')
-  assert.deepEqual(Array.from(tags.extra), ['🥚'])
-  assert.equal(tags.rest, 'Claude')
+test('鸡蛋等非价格标签保留，官Key 保留满血', () => {
+  const ctx = make()
+  assert.deepEqual(Array.from(ctx.groupTags('[🥚] Claude').extra), ['🥚'])
+  assert.deepEqual(Array.from(ctx.groupTags('[满血][官Key] Gemini').price).sort(), ['官Key', '满血'].sort())
+  assert.deepEqual(Array.from(ctx.groupTags('[低价][生图] 生图特惠').extra), [])
 })

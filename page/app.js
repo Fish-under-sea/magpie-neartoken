@@ -144,7 +144,7 @@
       const raw = options.disabledModels
       disabledModels = Array.isArray(raw) ? new Set(raw)
         : (typeof raw === 'string' && raw.trim() ? new Set((() => { try { return JSON.parse(raw) } catch { return [] } })()) : new Set())
-      initEnabledByGroup()
+      initDisabledByGroup()
       await load()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
@@ -1159,8 +1159,11 @@
     })[0]
   }
 
-  /** enabledByGroup: 模型 → 它在哪些分组里启用。默认只有最便宜的那一组。 */
-  const enabledByGroup = new Map()
+  /**
+   * disabledByGroup: 模型 → 被停用的分组集合。只记例外，默认全部分组启用。
+   * 这样写进 options 的内容极小；即使宿主存回来的格式不对，也不会把模型整体判成停用。
+   */
+  const disabledByGroup = new Map()
 
   /** 当前视图下这个模型用哪个分组判定启停：选定分组就用它，否则用最便宜那一组。 */
   function viewGroup(m) {
@@ -1169,8 +1172,8 @@
 
   /** 模型在当前视图分组里是否启用。 */
   function isOn(m) {
-    const set = enabledByGroup.get(m?.name)
-    return !!set && set.has(viewGroup(m))
+    const off = disabledByGroup.get(m?.name)
+    return !off || !off.has(viewGroup(m))
   }
 
   /** 按「分组 × 模型」的真实归属统计；启用与否按分组级状态判断。 */
@@ -1178,38 +1181,40 @@
     const out = new Map()
     for (const g of Object.keys(p?.groups || {})) out.set(g, { total: 0, enabled: 0 })
     for (const m of p?.models || []) {
-      const set = enabledByGroup.get(m.name)
+      const off = disabledByGroup.get(m.name)
       for (const raw of m?.enable_groups || []) {
         const g = String(raw ?? '').trim()
         if (!g) continue
         const row = out.get(g) || { total: 0, enabled: 0 }
         row.total++
-        if (set && set.has(g)) row.enabled++
+        if (!off || !off.has(g)) row.enabled++
         out.set(g, row)
       }
     }
     return out
   }
 
-  /** 载入启用状态：旧版全局 disabledModels 迁移为「所有分组都关」。 */
-  function initEnabledByGroup() {
-    const p = pricing()
-    if (!p) return
-    let stored = options.enabledByGroup
+  /** 写回载荷：只放停用例外，并清掉 0.6.7 早期的大字段，避免宿主里留过期映射。 */
+  function groupOptionsPayload(base, map) {
+    const payload = { ...(base || {}) }
+    delete payload.enabledByGroup
+    payload.disabledByGroup = Object.fromEntries([...map].map(([k, v]) => [k, [...v]]))
+    return payload
+  }
+
+  /** 读回分组级停用表。只认「模型名 → 分组数组」的合法形状，其余当没有记录。 */
+  function initDisabledByGroup() {
+    let stored = options.disabledByGroup
     if (typeof stored === 'string' && stored.trim()) {
       try { stored = JSON.parse(stored) } catch { stored = null }
     }
-    const has = (name) => stored && typeof stored === 'object' && Object.prototype.hasOwnProperty.call(stored, name)
-    for (const m of p.models) {
-      if (has(m.name)) {
-        enabledByGroup.set(m.name, new Set(Array.isArray(stored[m.name]) ? stored[m.name] : []))
-        continue
-      }
-      // 没有记录时按「全选」处理：模型在它列出的每个分组里都算启用。
-      const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
-      enabledByGroup.set(m.name, new Set(all))
+    disabledByGroup.clear()
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return
+    for (const [name, list] of Object.entries(stored)) {
+      if (!name || !Array.isArray(list)) continue
+      const groups = list.map((g) => String(g ?? '').trim()).filter(Boolean)
+      if (groups.length) disabledByGroup.set(String(name), new Set(groups))
     }
-    for (const name of disabledModels) enabledByGroup.set(name, new Set())
   }
 
   /** 官网给分组的说明；没有就返回空串，不编内容。 */
@@ -1528,10 +1533,11 @@
     if (!m) return
     const g = viewGroup(m)
     if (!g) return
-    const set = new Set(enabledByGroup.get(name) || [])
-    if (set.has(g)) set.delete(g)
-    else set.add(g)
-    enabledByGroup.set(name, set)
+    const off = new Set(disabledByGroup.get(name) || [])
+    if (off.has(g)) off.delete(g)
+    else off.add(g)
+    if (off.size) disabledByGroup.set(name, off)
+    else disabledByGroup.delete(name)
     refreshMarketView()
     await saveDisabled()
   }
@@ -1543,15 +1549,19 @@
     if (marketGroup) {
       for (const m of p.models) {
         if (!(m.enable_groups || []).includes(marketGroup)) continue
-        const set = new Set(enabledByGroup.get(m.name) || [])
-        if (enable) set.add(marketGroup)
-        else set.delete(marketGroup)
-        enabledByGroup.set(m.name, set)
+        const off = new Set(disabledByGroup.get(m.name) || [])
+        if (enable) off.delete(marketGroup)
+        else off.add(marketGroup)
+        if (off.size) disabledByGroup.set(m.name, off)
+        else disabledByGroup.delete(m.name)
       }
+    } else if (enable) {
+      // 全选 = 一条例外都不留，模型在它列出的每个分组里都启用
+      disabledByGroup.clear()
     } else {
       for (const m of p.models) {
         const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
-        enabledByGroup.set(m.name, enable ? new Set(all) : new Set())
+        if (all.length) disabledByGroup.set(m.name, new Set(all))
       }
     }
     render()
@@ -1572,8 +1582,7 @@
     if (sending) { sendAgain = true; return }
     sending = true
     try {
-      const byGroup = Object.fromEntries([...enabledByGroup].map(([k, v]) => [k, [...v]]))
-      const next = await bridge.options.set({ ...options, enabledByGroup: byGroup })
+      const next = await bridge.options.set(groupOptionsPayload(options, disabledByGroup))
       if (next && typeof next === 'object') options = next
       lastError = ''
     } catch {
