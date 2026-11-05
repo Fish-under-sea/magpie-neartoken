@@ -551,6 +551,8 @@
   let marketLayout = 'grid'
   let marketQuota = 'all'
   let marketEndpoint = 'all'
+  /** 侧栏各节的展开状态：key → 是否展开。 */
+  const asideOpen = new Map()
   let logQuery = ''
   let logGroup = ''
   let logKind = 'all'
@@ -1017,7 +1019,14 @@
       onclick: () => toggleModel(m.name),
     },
       el('div', { class: 'mc-head' },
-        el('span', { class: 'mc-vicon', text: vendorOf(m.vendor_id).slice(0, 1) }),
+        (() => {
+          const v = (pricing()?.vendors || []).find((x) => String(x.id) === String(m.vendor_id))
+          const icon = v ? vendorIconModel(v, pricing()) : null
+          return icon && icon.src
+            ? el('span', { class: 'mc-vicon mc-vicon-img' },
+              el('img', { src: icon.src, alt: '', width: 22, height: 22, loading: 'lazy', onerror: (e) => { e.target.style.display = 'none' } }))
+            : el('span', { class: 'mc-vicon', text: vendorOf(m.vendor_id).slice(0, 1) })
+        })(),
         el('div', { class: 'grow' },
           el('div', { class: 'mc-name', text: m.name }),
           el('div', { class: 'mc-vendor', text: vendorOf(m.vendor_id) })),
@@ -1036,7 +1045,9 @@
         more > 0 ? el('span', { class: 'mc-more', text: '+' + more }) : null),
       el('div', { class: 'mc-line' },
         el('span', { class: 'k', text: '端点' }),
-        el('span', { class: 'v', text: ends || '—' })),
+        el('div', { class: 'mc-ends' }, (m?.supported_endpoint_types || []).length
+          ? m.supported_endpoint_types.map((e) => el('span', { class: 'mc-end', text: e }))
+          : el('span', { class: 'v', text: '—' }))),
       el('div', { class: 'mc-stats' },
         el('span', null, el('span', { class: 'k', text: '状态' }),
           el('span', { class: 'v', text: hasStatus ? Number(m.status).toFixed(2) + '%' : '—' })),
@@ -1199,6 +1210,8 @@
     const payload = { ...(base || {}) }
     delete payload.enabledByGroup
     payload.disabledByGroup = Object.fromEntries([...map].map(([k, v]) => [k, [...v]]))
+    // 旧版「全局停用的模型」字段必须清空，否则 provider 仍按它把模型整批过滤
+    payload.disabledModels = []
     return payload
   }
 
@@ -1209,6 +1222,8 @@
       try { stored = JSON.parse(stored) } catch { stored = null }
     }
     disabledByGroup.clear()
+    // 旧版全局停用表一律作废：新状态只看 disabledByGroup
+    disabledModels = new Set()
     if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return
     for (const [name, list] of Object.entries(stored)) {
       if (!name || !Array.isArray(list)) continue
@@ -1420,16 +1435,37 @@
           el('span', { class: 'vendor-name', text: v.name }),
           item.count > 0 ? el('span', { class: 'vendor-count', text: String(item.count) }) : null)
       }))
+    // 每一节都可折叠：标题行是按钮，展开状态记在 asideOpen 里，重绘不丢。
+    const asideSec = (key, title, body, openByDefault, badge) => {
+      const open = asideOpen.has(key) ? asideOpen.get(key) : openByDefault
+      const head = el('button', {
+        class: 'aside-sec-head', 'data-sec': key, 'aria-expanded': String(open),
+        onclick: (e) => {
+          const node = e.currentTarget.closest('.aside-sec')
+          const next = !node.classList.contains('closed')
+          node.classList.toggle('closed', next)
+          e.currentTarget.setAttribute('aria-expanded', String(!next))
+          asideOpen.set(key, !next)
+        },
+      },
+        el('span', { class: 'aside-sec-title', text: title }),
+        badge ? el('span', { class: 'aside-sec-badge', text: badge }) : null,
+        el('span', { class: 'aside-sec-chev', text: '⌄' }))
+      return el('section', { class: 'aside-sec' + (open ? '' : ' closed'), 'data-sec-body': key }, head,
+        el('div', { class: 'aside-sec-body' }, body))
+    }
+    const activeCount = [marketGroup, marketKind !== 'all', marketQuota !== 'all', marketEndpoint !== 'all', marketVendors.size].filter(Boolean).length
     const aside = el('aside', { class: 'market-aside' },
       el('div', { class: 'ma-head' },
         el('h3', { text: '筛选' }),
         el('button', { class: 'link', onclick: () => { marketQuery = ''; marketGroup = ''; marketKind = 'all'; marketQuota = 'all'; marketEndpoint = 'all'; marketVendors.clear(); search.value = ''; refreshMarketView() } }, '↺ 重置')),
       el('p', { class: 'note', text: '按供应商、分组、类型和标签细化搜索模型。' }),
-      el('h4', { text: '分组' }), groupChips,
-      el('h4', { text: '类型' }), kinds,
-      el('h4', { text: '供应商' }), vendorChips,
-      el('h4', { text: '定价类型' }), quotaChips,
-      el('h4', { text: '端点类型' }), endpointChips)
+      activeCount ? el('p', { class: 'note aside-active', text: '已启用 ' + activeCount + ' 个筛选条件' }) : null,
+      asideSec('group', '分组', groupChips, true, marketGroup ? '1' : ''),
+      asideSec('kind', '类型', kinds, true, marketKind !== 'all' ? '1' : ''),
+      asideSec('vendor', '供应商', vendorChips, false, marketVendors.size ? String(marketVendors.size) : ''),
+      asideSec('quota', '定价类型', quotaChips, false, marketQuota !== 'all' ? '1' : ''),
+      asideSec('endpoint', '端点类型', endpointChips, false, marketEndpoint !== 'all' ? '1' : ''))
     const off = disabledModels.size
     const body = el('div', { class: 'market-body' },
       aside,

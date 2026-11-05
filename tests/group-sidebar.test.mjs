@@ -104,11 +104,12 @@ test('档位计数只数含启用模型的分组', () => {
 test('写回载荷只放停用例外，并清掉旧的大字段', () => {
   const ctx = make([['a', ['G1']]])
   // vm 里创建的对象原型不同，统一用 JSON 形态比较
-  const payload = JSON.parse(JSON.stringify(ctx.groupOptionsPayload({ disabledModels: ['x'], enabledByGroup: { a: ['G1', 'G2'] } }, ctx.__dbg)))
+  const payload = JSON.parse(JSON.stringify(ctx.groupOptionsPayload({ disabledModels: ['x'], other: 'keep', enabledByGroup: { a: ['G1', 'G2'] } }, ctx.__dbg)))
   assert.deepEqual(payload.enabledByGroup, undefined)
   assert.equal('enabledByGroup' in payload, false)
   assert.deepEqual(payload.disabledByGroup, { a: ['G1'] })
-  assert.deepEqual(payload.disabledModels, ['x'], '其它字段原样保留')
+  assert.deepEqual(payload.disabledModels, [], '旧版全局停用表必须清空，否则 provider 仍按它过滤模型')
+  assert.equal(payload.other, 'keep', '其它字段原样保留')
   const empty = JSON.parse(JSON.stringify(ctx.groupOptionsPayload({}, new Map())))
   assert.deepEqual(empty.disabledByGroup, {}, '默认全选时载荷就是空对象')
 })

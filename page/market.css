@@ -331,3 +331,75 @@
   .lt-row { grid-template-columns: 80px minmax(120px, 1.5fr) 90px 90px 60px; }
   .lt-row > span:nth-child(2), .lt-row > span:nth-child(4), .lt-row > span:nth-child(6), .lt-row > span:nth-child(8) { display: none; }
 }
+/* ---------- 侧栏可折叠小节（照上游定价页的折叠分组） ---------- */
+.market-aside .aside-sec { border-top: 1px solid var(--nt-line); }
+.market-aside .aside-sec:first-of-type { border-top: 0; }
+.aside-sec-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 2px; border: 0; background: transparent; color: var(--nt-ink);
+  font: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: .02em;
+  cursor: pointer; text-align: left;
+}
+.aside-sec-head:hover .aside-sec-title { color: var(--nt-accent); }
+.aside-sec-head:focus-visible { outline: 2px solid var(--nt-accent); outline-offset: 2px; border-radius: 6px; }
+.aside-sec-title { flex: 1 1 auto; }
+.aside-sec-badge {
+  flex: none; min-width: 16px; padding: 0 5px; border-radius: 999px;
+  background: var(--nt-accent-soft); color: var(--nt-accent);
+  font-family: var(--nt-code); font-size: 9.5px; line-height: 15px; text-align: center;
+}
+/* 展开朝上、收起朝右：和上游定价页的折叠箭头一致 */
+.aside-sec-chev { flex: none; color: var(--nt-faint); font-size: 12px; transition: transform .16s ease; transform: rotate(180deg); }
+.aside-sec.closed .aside-sec-chev { transform: rotate(0deg); }
+.aside-sec.closed .aside-sec-body { display: none; }
+.aside-sec-body { padding: 0 0 10px; }
+.market-aside .aside-active { color: var(--nt-accent); }
+
+/* ---------- 模型卡片：向上游定价页的卡片层次靠拢 ---------- */
+.mc {
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.012));
+  box-shadow: 0 1px 0 rgba(255,255,255,.03) inset;
+  transition: border-color .14s, background .14s, opacity .14s, transform .14s, box-shadow .14s;
+}
+.mc:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.28); }
+.mc.on { box-shadow: 0 0 0 1px var(--nt-accent) inset, 0 8px 22px rgba(0,0,0,.22); }
+.mc-name { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.mc-vendor { font-size: 10.5px; letter-spacing: .02em; }
+.mc-desc {
+  margin: 6px 0 8px; font-size: 11.5px; line-height: 1.55; color: var(--nt-muted);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.mc-billing {
+  align-self: flex-start; margin-bottom: 6px;
+  border-radius: 6px; letter-spacing: .02em;
+}
+.mc-prices > div {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 3px 0; border-bottom: 1px dashed rgba(127,127,127,.16);
+}
+.mc-prices > div:last-child { border-bottom: 0; }
+.mc-prices > div > span { color: var(--nt-muted); font-size: 10.5px; }
+.mc-prices > div > b { font-family: var(--nt-code); font-size: 11.5px; font-weight: 600; color: var(--nt-ink); }
+.mc-line { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; min-width: 0; }
+.mc-line > .k { flex: none; width: 26px; color: var(--nt-faint); font-size: 10px; line-height: 18px; }
+.mc-ends { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.mc-end {
+  padding: 1px 6px; border: 1px solid var(--nt-line); border-radius: 6px;
+  font-family: var(--nt-code); font-size: 9.5px; line-height: 15px; color: var(--nt-muted);
+}
+.mc-stats {
+  margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--nt-line);
+  gap: 10px; font-size: 10px;
+}
+.mc-stats .v { font-family: var(--nt-code); color: var(--nt-ink); }
+.mc-foot { margin-top: 8px; display: flex; justify-content: flex-end; }
+.mc-foot .link { font-size: 10.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mc, .aside-sec-chev { transition: none; }
+  .mc:hover { transform: none; }
+}
+
+.mc-vicon-img { display: inline-flex; align-items: center; justify-content: center; background: rgba(255,255,255,.06); }
+.mc-vicon-img img { border-radius: 5px; object-fit: contain; }
