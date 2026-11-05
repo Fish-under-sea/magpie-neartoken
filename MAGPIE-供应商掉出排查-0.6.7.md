@@ -44,8 +44,9 @@ const [env, status] = await Promise.all([call('/api/pricing'), call('/api/status
 1. 先取站点实时目录；**失败或返回空 `data` 时**，读包内 `page/pricing.js`，把 `models[].name` 映射回 `data[].model_name`，并还原 `group_ratio / group_refs / usable_group / vendors / supported_endpoint`。
 2. `catalog()` 改用 `loadPricingEnv()`，`bundled` 时跳过 `writePricing()` / `writeGroups()`（不回写快照、不污染只读安装）。
 3. 于是 `provider.models()` 在网络失败时仍返回稳定的 109 行模型表，保留 `x-neartoken-group` 头、`kind` 与 `capabilities`，并继续遵守 `disabledModels`。
+4. 同一版新增分组级路由：`catalog()` 接受 `options.enabledByGroup`（模型 → 它在哪些分组启用），只在生效分组里选最低倍率那一组；没有记录的模型保持原行为（全部候选，取最便宜）。该键由页面写入，宿主只需原样持久化。
 
-验证：`tests/bundled-catalog.test.mjs` 3 项（离线兜底、分类/路由头、禁用集合）全绿；单元 39 项、浏览器 53 项全绿。
+验证：`tests/bundled-catalog.test.mjs` 3 项（离线兜底、分类/路由头、禁用集合）全绿；`tests/provider-group-scope.test.mjs` 3 项（默认走最便宜组、只留官Key时改走官Key、全停用则不出现）全绿；发布前单元 54 项、浏览器 58 + 12 项全绿。
 
 ## 4. 宿主侧残留线索（独立包无法修，待真实宿主复现）
 
@@ -76,7 +77,7 @@ const [env, status] = await Promise.all([call('/api/pricing'), call('/api/status
 - 断网 / `/api/pricing` 失败时，供应商列表仍保留 neartoken 与完整模型表（不再需要重新注入）。
 - 网络恢复后自动回到实时目录，不残留旧快照。
 - **启停按分组独立**：`options.enabledByGroup` 记录「模型在哪些分组启用」。在某个分组里启用/停用模型，只改变该分组；同一模型在别的分组不受牵连。
-- 默认每个模型只在**最便宜的分组**启用，与 `catalog` 实际路由一致；因此不会因为启用一个模型就点亮一串分组。
+- 默认（以及「全选」）按模型列出的**所有分组**启用，所以点击全选后不会留下点不亮的分组；未做任何操作时也是全亮状态。
 - 想用更贵的分组（如官Key）时，切到该分组再启用模型即可：该组会亮，provider 也随之改为走这一组；所有分组都能控制，不存在「永远点不亮」的项。
 - 分组侧栏：维持原单行胶囊，**不加竖条**；含启用模型的分组整块淡绿提亮，没有启用模型的一律灰化（熄灭态降透明并去色，避免彩色标签看着仍像启用）。
 - 选中某个分组后，右侧模型区顶部出现横幅：分组标签 + 倍率 + 站点 `usable_group` 说明；切回「所有分组」时横幅隐藏。
@@ -85,4 +86,8 @@ const [env, status] = await Promise.all([call('/api/pricing'), call('/api/status
 - 侧栏提供「定价类型」（所有模型 / 按量计费 / 按次计费 / 任务计费）与「端点类型」（Chat / Response / Anthropic / Gemini / Rerank / 图片 / 嵌入 / 视频），均带数量，可与其他筛选叠加。
 - 供应商 chip 前置官网同款品牌图标与模型数；模型启停、筛选、排序、后台重绘均不重建侧栏节点，保留滚动与焦点。
 
-本轮改动**尚未提交、未发版**（用户未授权发布）。真实宿主 + 有效账户的 A/B 仍属宿主方验收范围。
+## 7. 发布状态与宿主需知
+
+- 已随 `@fish-under-sea/magpie-neartoken@0.6.7` 发布（npm `latest`）并打 GitHub Release，附 `fish-under-sea-magpie-neartoken-0.6.7.tgz`。
+- `options` 新增键 `enabledByGroup`（对象：模型名 → 分组名数组）。宿主若不认识该键，请原样存取、不要丢弃；被丢弃时页面会退回默认（全部分组启用），路由仍取最便宜组，功能不坏但分组级启停失效。
+- 真实宿主 + 有效账户的 A/B 仍属宿主方验收范围；本插件的修复不替代那条核验。
