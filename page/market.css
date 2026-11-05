@@ -519,3 +519,8 @@
   .lg-btn, .lg-cal-presets button, .lg-range-btn, .lg-select, .lg-input, .lg-chip { transition: none; }
   .lg-btn.refreshing .spin { animation: none; }
 }
+
+.lg-btn.on { color: var(--nt-ink); border-color: var(--nt-accent); background: var(--nt-accent-soft); }
+.lg-row:not(.head):hover { background: rgba(255,255,255,.025); }
+.lg-row { transition: background-color .12s ease; }
+@media (prefers-reduced-motion: reduce) { .lg-row { transition: none; } }

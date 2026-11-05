@@ -571,6 +571,20 @@
   let logTo = null
   /** 日期弹层是否展开。 */
   let logCalOpen = false
+  /** 日志每 10 秒自动刷新是否开启。 */
+  let logAuto = false
+  let logAutoTimer = null
+  function setLogAuto(on) {
+    logAuto = on
+    if (logAutoTimer) { clearInterval(logAutoTimer); logAutoTimer = null }
+    if (on) {
+      logAutoTimer = setInterval(() => {
+        if (tab !== 'logs') return
+        windows.delete('day'); windows.delete('week'); windows.delete('month')
+        load().catch(() => {})
+      }, 10000)
+    }
+  }
   const marketVendors = new Set()
   const MARKET_QUOTA = [['all', '所有模型'], ['token', '按量计费'], ['request', '按次计费'], ['task', '任务计费']]
   const MARKET_ENDPOINTS = [['all', '所有类型'], ['openai', 'Chat'], ['openai-response', 'Response'], ['anthropic', 'Anthropic'], ['gemini', 'Gemini'], ['jina-rerank', 'Rerank'], ['image-generation', '图片'], ['embedding', '嵌入'], ['openai-video', '视频']]
@@ -1633,14 +1647,20 @@
         el('span', { class: 'lg-chip' }, el('i', { class: 'lg-dot blue' }), 'TPM ', el('b', { text: compact(data?.tokens || 0) }))),
       el('div', { class: 'lg-actions' },
         el('button', {
-          class: 'lg-btn', title: '刷新用量数据（每 10 秒自动刷新）',
+          class: 'lg-btn' + (logAuto ? ' on' : ''),
+          title: logAuto ? '已开启每 10 秒自动刷新，点一下暂停' : '开启每 10 秒自动刷新',
+          'aria-pressed': String(logAuto),
+          onclick: () => { setLogAuto(!logAuto); render() },
+        }, el('span', { class: 'spin', text: '⟳' }), el('span', { text: logAuto ? ' 10s · 开' : ' 10s' })),
+        el('button', {
+          class: 'lg-btn icon', title: '立即刷新',
           onclick: (e) => {
             const btn = e.currentTarget
             btn.classList.add('refreshing')
-            windows.clear()
+            windows.delete('day'); windows.delete('week'); windows.delete('month')
             load().catch(() => {}).finally(() => setTimeout(() => btn.classList.remove('refreshing'), 700))
           },
-        }, el('span', { class: 'spin', text: '⟳' }), el('span', { text: ' 10s' })),
+        }, el('span', { class: 'spin', text: '↻' })),
         el('button', { class: 'lg-btn icon', title: '显示或隐藏明细', onclick: () => { logExpanded = !logExpanded; render() } }, '👁'),
         el('button', { class: 'lg-btn', onclick: () => { logQuery = ''; logGroup = ''; logKind = 'all'; logFrom = null; logTo = null; windows.clear(); load().catch(() => {}); render() } }, '重置'),
         el('button', { class: 'lg-btn primary', onclick: () => render() }, '搜索'),
