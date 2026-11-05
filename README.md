@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.6.10**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**0.6.11**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.10.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.11.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,15 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 0.6.11 改开关不再掉供应商
+
+现象：在模型广场里改任意一个模型的启用状态，供应商那块就会掉。定位到冷启动这一步——写 options 后宿主会重建插件宿主，进程内的目录缓存随之清空，而首次列举模型还要等网络，宿主等不到就把供应商判成「没有模型」。
+
+- 冷启动不再赌网络：直接读包内 `page/pricing.js` 快照返回（毫秒级），实时目录在后台拉取并替换缓存。
+- 配合 0.6.9 已在做的两件事：作废旧 `disabledModels`、版本探测不阻塞列举。
+
+现在改开关触发的重新列举是同步级的，供应商不会再因为等网络而消失。
 
 ## 0.6.10 模型字段补齐与 API 方言
 
