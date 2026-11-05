@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.6.13**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**0.6.17**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.13.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.17.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,23 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 0.6.17 使用日志对齐原站 · 页头整理
+
+使用日志按原站 `/usage-logs/common` 对齐（在 0.6.13 基础上继续）：
+
+- 筛选全部胶囊化；分组 / 所有类型 / 查看改用自定义下拉（深色浮层、当前项 ✓、`管理`/`登录` 带「已弃用」徽标），靠右菜单向左展开避免裁切。
+- 「展开」改为展开第二行筛选（令牌名称 / 请求 ID / 上游请求 ID），按钮在「展开 ▾ / 收起 ▴」间切换。
+- 动作区：`10s`（5/10/30/60s 间隔菜单）、眼睛（睁眼/闭眼双态，隐藏敏感信息）、`搜索`（蓝色胶囊，点击脉冲并刷新）、`重置`、`查看`（切换列）；已删除「导出」。
+- 表格：令牌列钥匙图标、模型列厂商品牌 logo、分组徽标、思考档；Token 千分位（逐条模式「输入 / 输出」）、费用胶囊、耗时绿条；列可切换隐藏。
+- 控件统一 32px，箭头与文字垂直居中，动效尊重 `prefers-reduced-motion`。
+
+页头：
+
+- 删除「检查更新」；改为自动热重载（定时比对 `page/latest.js`，发现新版本带破缓存参数重载本页，同版本只重载一次）。
+- 「断开连接」改为与「已连接」同款胶囊，红色底/边/字。
+
+逐条流水与账号级分组筛选仍需宿主 `neartoken:usage` 提供 `rows`（见 FISH-DOCK-Plugins #33）。
 
 ## 0.6.13 使用日志按原站重做
 
