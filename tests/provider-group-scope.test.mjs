@@ -84,34 +84,21 @@ test('未指定分组级状态时，模型走最便宜的组', async () => {
   assert.equal((await models({})).m1.headers['x-neartoken-group'], '#1')
 })
 
-test('停用例外表只关掉列出的分组，其余分组仍可用', async () => {
-  const m = await models({ disabledByGroup: { m1: ['G-cheap'] } })
-  assert.equal(m.m1.headers['x-neartoken-group'], '#2')
-  assert.ok(m.img1, '没被列出的模型不受影响')
-})
-
-test('旧启用表仍可用：只留官Key时改走该组', async () => {
-  const m = await models({ enabledByGroup: { m1: ['G-key'] } })
-  assert.equal(m.m1.headers['x-neartoken-group'], '#2')
-})
-
-test('分组表形状不合法时一律当没有记录，不能把模型判成停用', async () => {
-  for (const bad of [
-    { enabledByGroup: { m1: 'G-key' } },
-    { enabledByGroup: { m1: [] } },
-    { enabledByGroup: [] },
-    { enabledByGroup: 'not-json' },
-    { disabledByGroup: { m1: 42 } },
-    { disabledByGroup: null },
+test('页面侧启停不再参与过滤，模型表始终是全量', async () => {
+  for (const opt of [
+    { disabledByGroup: { m1: ['G-cheap'] } },
+    { enabledByGroup: { m1: ['G-key'] } },
+    { disabledModels: ['m1'] },
+    { disabledByGroup: { m1: ['G-cheap', 'G-key'] } },
   ]) {
-    const m = await models(bad)
-    assert.ok(m.m1, '不应掉出：' + JSON.stringify(bad))
-    assert.ok(m.img1, '不应掉出：' + JSON.stringify(bad))
+    const m = await models(opt)
+    assert.ok(m.m1, '不应被过滤掉：' + JSON.stringify(opt))
+    assert.ok(m.img1)
   }
 })
 
-test('模型的所有分组都停用时才不出现在模型表', async () => {
-  const m = await models({ disabledByGroup: { m1: ['G-cheap', 'G-key'] } })
-  assert.equal(m.m1, undefined)
-  assert.ok(m.img1)
+test('分组头由 fetch 注入，模型自身也带一份', async () => {
+  const m = await models({})
+  assert.equal(m.m1.headers['x-neartoken-group'], '#1')
 })
+

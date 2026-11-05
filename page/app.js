@@ -1216,8 +1216,14 @@
   }
 
   /** 读回分组级停用表。只认「模型名 → 分组数组」的合法形状，其余当没有记录。 */
+  const DISABLED_KEY = 'neartoken:disabledByGroup'
   function initDisabledByGroup() {
-    let stored = options.disabledByGroup
+    let stored = null
+    try {
+      const raw = localStorage.getItem(DISABLED_KEY)
+      if (raw && raw.trim()) stored = JSON.parse(raw)
+    } catch { stored = null }
+    if (!stored) stored = options.disabledByGroup
     if (typeof stored === 'string' && stored.trim()) {
       try { stored = JSON.parse(stored) } catch { stored = null }
     }
@@ -1474,8 +1480,8 @@
         el('div', { class: 'market-count', id: 'market-count', text: (p?.models?.length || 0) + ' 个模型' + (syncedAt() ? ' · 同步 ' + syncedAt() : '') }),
         el('div', { class: 'model-grid', id: 'market-list' }),
         el('p', { class: 'note', text: off
-          ? '已停用 ' + off + ' 个模型：它们不会进 magpie 的模型清单。点卡片可重新启用，或按「全选」。'
-          : '默认全选。点卡片切换启用状态，高亮 = 已启用；只有启用的模型才进 magpie 的模型清单。' })))
+          ? '已停用 ' + off + ' 个模型：只记在本页，magpie 的模型列表不受影响。点卡片可重新启用，或按「全选」。'
+          : '默认全选。点卡片切换启用状态（记在本机），高亮 = 已启用；magpie 的模型列表始终是站点全量。' })))
     const wrap = el('section', { class: 'market' },
       el('div', { class: 'market-top' }, search, tools),
       body)
@@ -1615,18 +1621,13 @@
   let sending = false
   let sendAgain = false
   async function flushDisabled() {
-    if (sending) { sendAgain = true; return }
-    sending = true
+    // 只写本机存储：不碰宿主 options，宿主就不会因为改开关去重建插件宿主，
+    // 供应商也就不会掉。代价是停用的模型仍会出现在 magpie 的模型列表里。
     try {
-      const next = await bridge.options.set(groupOptionsPayload(options, disabledByGroup))
-      if (next && typeof next === 'object') options = next
+      localStorage.setItem(DISABLED_KEY, JSON.stringify(Object.fromEntries([...disabledByGroup].map(([k, v]) => [k, [...v]]))))
       lastError = ''
     } catch {
-      // 写失败时保留本地状态，下一拍重试；不把限流提示挂到页脚
-      sendAgain = true
-    } finally {
-      sending = false
-      if (sendAgain) { sendAgain = false; setTimeout(flushDisabled, 1100) }
+      /* 存不下就只保留本次会话的状态 */
     }
   }
   function saveDisabled() {

@@ -283,6 +283,9 @@ function npmOf(row) {
   return '@ai-sdk/openai-compatible'
 }
 
+/** 模型 → 分组 ref。请求不在 catalog 里，靠这张表补 x-neartoken-group。 */
+const groupRefOf = new Map()
+
 async function catalog(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map(), disabledByGroup = new Map()) {
   const groupsOut = new Map()
   const { env, status, bundled } = await loadPricingEnv()
@@ -302,7 +305,7 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
   const out = {}
   for (const row of ordered) {
     const model = String(row?.model_name ?? '').trim()
-    if (!model || disabledModels.has(model)) continue
+    if (!model) continue
     const kind = kindOf(row)
     const all = Array.isArray(row?.enable_groups) && row.enable_groups.length ? row.enable_groups : ['']
     // 先按「全部分组」计数（关掉的也算），模型广场要显示它有多少个模型
@@ -314,12 +317,8 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
     }
     const groups = all.filter((g) => {
       const name = String(g ?? '').trim()
-      if (!name || disabledGroups.has(name)) return false
-      const off = disabledByGroup.get(model)
-      if (off && off.has(name)) return false
-      const on = enabledByGroup.get(model)
-      if (on && on.size) return on.has(name)
-      return true
+      // 只保留显式配置的分组级禁用；页面侧的启停不再参与过滤
+      return !!name && !disabledGroups.has(name)
     })
     if (!groups.length) continue
     // 一个模型只出一行：多分组不再展开成多行，否则「只启用一个模型」在
@@ -342,6 +341,8 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
       video: mods.includes('video'),
       pdf: mods.includes('pdf'),
     }
+    // 记下这一行实际走的分组，fetch 时补头用
+    groupRefOf.set(model, main.ref || '')
     out[model] = {
       // OpenCode 的 Model 形状：id + name 都要给，宿主按 id 取、按 name 显示
       id: model,
@@ -671,24 +672,29 @@ export default async function neartoken(input, options) {
           apiKey: key,
           baseURL: SITE + '/v1',
           fetch: async (input, init) => {
-            // 保险：模型名里若还带着 `#ref::` 前缀，拆掉并补上头
             const body = init?.body
-            if (typeof body === 'string') {
-              try {
-                const parsed = JSON.parse(body)
-                const raw = parsed?.model
-                if (typeof raw === 'string' && raw.includes('::')) {
-                  const [ref, model] = raw.split('::')
-                  parsed.model = model
-                  const headers = new Headers(init?.headers || {})
-                  if (ref.startsWith('#')) headers.set('x-neartoken-group', ref)
-                  return fetch(input, { ...init, body: JSON.stringify(parsed), headers })
-                }
-              } catch {
-                /* 不是 JSON 就原样发 */
-              }
+            if (typeof body !== 'string') return fetch(input, init)
+            let parsed
+            try { parsed = JSON.parse(body) } catch { return fetch(input, init) }
+            let touched = false
+            const raw = parsed?.model
+            let model = typeof raw === 'string' ? raw : ''
+            // 旧格式 model 里可能带 `#ref::` 前缀，拆掉
+            let ref = ''
+            if (model.includes('::')) {
+              const [r, m] = model.split('::')
+              if (r.startsWith('#')) ref = r
+              model = m
+              parsed.model = m
+              touched = true
             }
-            return fetch(input, init)
+            const headers = new Headers(init?.headers || {})
+            // 站点必须收到分组头才按对应渠道分发；收不到会回落 default 组，
+            // 那边常常没有渠道，于是 503「No available channel for model … under group default」。
+            if (!ref) ref = groupRefOf.get(model) || ''
+            if (ref) { headers.set('x-neartoken-group', ref); touched = true }
+            if (!touched) return fetch(input, init)
+            return fetch(input, { ...init, body: JSON.stringify(parsed), headers })
           },
         }
       },
