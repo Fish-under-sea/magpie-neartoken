@@ -232,7 +232,7 @@ async function loadPricingEnv() {
     : { env: { data: [] }, status: null, bundled: true }
 }
 
-async function catalog(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map()) {
+async function catalog(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map(), disabledByGroup = new Map()) {
   const groupsOut = new Map()
   const { env, status, bundled } = await loadPricingEnv()
   const rows = Array.isArray(env?.data) ? env.data : []
@@ -264,8 +264,10 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
     const groups = all.filter((g) => {
       const name = String(g ?? '').trim()
       if (!name || disabledGroups.has(name)) return false
-      // 该模型在分组级启用状态里有记录时，只保留它被启用的分组
-      if (enabledByGroup.has(model)) return enabledByGroup.get(model).has(name)
+      const off = disabledByGroup.get(model)
+      if (off && off.has(name)) return false
+      const on = enabledByGroup.get(model)
+      if (on && on.size) return on.has(name)
       return true
     })
     if (!groups.length) continue
@@ -278,9 +280,7 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
       ratio: ratioOf(ratios, String(g ?? '').trim()),
     })).sort((a, b) => (a.ratio || 1e9) - (b.ratio || 1e9))
     const main = ranked[0] || { name: '', ref: '', ratio: 0 }
-    const label = main.name
-      ? (main.ratio > 0 ? `${main.name} ${ratioText(main.ratio)}x` : main.name) + ' · ' + model
-      : model
+    const label = model
     out[model] = {
       name: label,
       api: { id: model, url: SITE + '/v1', npm: '@ai-sdk/openai-compatible' },
@@ -485,21 +485,27 @@ export default async function neartoken(input, options) {
   }
   const disabledGroups = asSet(options?.disabledGroups)
   const disabledModels = asSet(options?.disabledModels)
-  // 分组级启用状态：模型 → 它在哪些分组里被启用；没记录的模型按默认（最便宜组）处理。
-  const enabledByGroup = new Map()
-  const rawByGroup = (() => {
-    const raw = options?.enabledByGroup
-    if (raw && typeof raw === 'object') return raw
+  /**
+   * 分组级状态。disabledByGroup 是主用的例外表（模型 → 被停用的分组）；
+   * enabledByGroup 是 0.6.7 早期写法，仍兼容但只在形状合法时采用。
+   * 任何形状不合法都当作「没有记录」，退回默认（该模型所有分组都可用），
+   * 绝不让一条坏数据把模型整体判成停用——那会直接表现为供应商掉出。
+   */
+  function readGroupMap(raw) {
     if (typeof raw === 'string' && raw.trim()) {
-      try { return JSON.parse(raw) } catch { return null }
+      try { raw = JSON.parse(raw) } catch { return new Map() }
     }
-    return null
-  })()
-  if (rawByGroup && typeof rawByGroup === 'object') {
-    for (const [name, list] of Object.entries(rawByGroup)) {
-      enabledByGroup.set(name, new Set(Array.isArray(list) ? list.map(String) : []))
+    const map = new Map()
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return map
+    for (const [name, list] of Object.entries(raw)) {
+      if (!name || !Array.isArray(list)) continue
+      const groups = list.map((g) => String(g ?? '').trim()).filter(Boolean)
+      if (groups.length) map.set(String(name), new Set(groups))
     }
+    return map
   }
+  const disabledByGroup = readGroupMap(options?.disabledByGroup)
+  const enabledByGroup = readGroupMap(options?.enabledByGroup)
   // 后台每 5 分钟把 /api/pricing 再拉一遍写回 page/pricing.js，
   // 页面每分钟重载该文件——模型清单与分组就跟着站点实时同步。
   scheduleCatalogSync()
@@ -625,7 +631,7 @@ export default async function neartoken(input, options) {
        */
       async models() {
         await stampLatest()
-        return catalog(disabledGroups, disabledModels, enabledByGroup)
+        return catalog(disabledGroups, disabledModels, enabledByGroup, disabledByGroup)
       },
     },
   }
