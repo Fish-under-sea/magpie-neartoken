@@ -154,12 +154,26 @@
     }
   }
 
-  /** fail 是连不上宿主的终态：一句说明，一个重试。 */
+  /** 接口不可用时只提供网页入口，不重发授权、充值或兑换请求。 */
+  function webFallbackLinks() {
+    return el('div', { class: 'row', 'data-web-fallback': 'true', style: 'flex-wrap:wrap;gap:8px;margin-top:12px' },
+      [['https://neartoken.cc/', '打开站点登录 ↗'], ['https://neartoken.cc/wallet', '网页钱包 / 充值 ↗'], ['https://neartoken.cc/pricing', '官网模型目录 ↗']].map(([url, label]) =>
+        el('a', { class: 'ghost link', href: affURL(url), target: '_blank', rel: 'noopener noreferrer' }, label)),
+      el('button', { class: 'ghost', onclick: () => copy(affURL('https://neartoken.cc/')) }, '复制站点地址'))
+  }
+  function webFallbackCard() {
+    return card('通过网页继续',
+      el('p', { class: 'brief', text: '接口暂未就绪时，可先在站点登录、查看钱包或访问模型目录。网页登录不会自动完成插件设备授权。' }),
+      webFallbackLinks(),
+      el('p', { class: 'note', text: '如刚提交过充值，请先在网页钱包确认订单状态，不要重复下单。若宿主未打开网页，可复制地址到浏览器。' }))
+  }
+
+  /** 状态读取失败时同时保留重试与网页入口。 */
   function fail(message) {
     $('view').replaceChildren(card('NearToken',
       el('p', { class: 'brief', text: message }),
       el('div', { class: 'row', style: 'margin-top:12px' },
-        el('button', { class: 'primary', onclick: () => location.reload() }, '重试'))))
+        el('button', { class: 'primary', onclick: () => location.reload() }, '重试'))), webFallbackCard())
     setStatus('不可用', 'warn')
   }
 
@@ -222,6 +236,7 @@
     }
     if (view.error) frag.append(el('p', { class: 'note bad', text: view.error }))
     if (lastError) frag.append(el('p', { class: 'note bad', text: lastError }))
+    if (view.error || lastError || (tab === 'logs' && windows.get(span)?.available === false)) frag.append(webFallbackCard())
     if (notice) frag.append(el('p', { class: 'note', text: notice }))
     if (pendingAct) frag.append(el('p', { class: 'note', text: '正在处理：' + pendingAct }))
     body.replaceChildren(frag)
@@ -388,7 +403,7 @@
       parts.push(el('p', { class: 'note warn', text: data.reason === 'unreachable'
         ? '暂时读不到站点的用量数据。'
         : '站点未提供用量统计。' }))
-      if (!data.reason) parts.push(el('p', { class: 'note', text: '' }))
+      parts.push(webFallbackLinks())
       return card(null, ...parts)
     }
     parts.push(el('div', { class: 'stats' },
@@ -415,8 +430,8 @@
    */
   function topupCard() {
     const info = topupInfo
-    if (!info) return el('section', { class: 'card home-wide tp-wide' }, el('p', { class: 'note', text: '正在读取充值档位…' }))
-    if (info.unavailable) return el('section', { class: 'card home-wide tp-wide' }, el('p', { class: 'note', text: info.unavailable }))
+    if (!info) return el('section', { class: 'card home-wide tp-wide' }, el('p', { class: 'note', text: '正在读取充值档位…' }), webFallbackLinks())
+    if (info.unavailable) return el('section', { class: 'card home-wide tp-wide' }, el('p', { class: 'note', text: info.unavailable }), webFallbackLinks())
     const options = Array.isArray(info.options) && info.options.length ? info.options : []
     const methods = Array.isArray(info.methods) ? info.methods.slice() : []
     // 微信支付即便站点没给也补一个灰色占位，撑住右侧视觉空白

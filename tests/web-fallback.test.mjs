@@ -1,0 +1,8 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
+const source=fs.readFileSync(new URL('../page/app.js',import.meta.url),'utf8'),html=fs.readFileSync(new URL('../page/index.html',import.meta.url),'utf8');const names=new Set(['fail','webFallbackLinks','webFallbackCard','topupCard','act']);const functions=[...source.matchAll(/  (?:async )?function (\w+)\([^\n]*\) \{[\s\S]*?\n  \}/g)].filter(m=>names.has(m[1])).map(m=>m[0]).join('\n');
+function setup(){let content;const el=(tag,attrs,...children)=>({tag,attrs:attrs||{},children:children.flat(Infinity).filter(Boolean)});const c=vm.createContext({el,card:(title,...children)=>el('section',{title},...children),$:()=>({replaceChildren:(...nodes)=>content=el('main',{},...nodes)}),setStatus:()=>{},location:{reload:()=>{}},affURL:x=>x,copy:()=>{},topupInfo:{unavailable:'接口尚未就绪'},pendingAct:'',render:()=>{},showError:()=>{},softRefresh:async()=>{}});vm.runInContext(functions,c);return{c,content:()=>content}}
+function anchors(n){return [...(n?.tag==='a'?[n]:[]),...(n?.children||[]).flatMap(x=>anchors(x))]}
+test('状态读取失败页面提供官网与钱包入口',()=>{const t=setup();t.c.fail('404');const links=anchors(t.content()).map(x=>x.attrs.href);assert(links.some(x=>/^https:\/\/neartoken\.cc\/?$/.test(x)));assert(links.some(x=>x.includes('/wallet')))});
+test('充值接口不可用时可以直接前往站点钱包',()=>{const t=setup();const links=anchors(t.c.topupCard());assert(links.some(x=>x.attrs.href.includes('/wallet')))});
+test('静态页头始终保留官网网页入口',()=>assert(/<a[^>]*id="site"[^>]*href="https:\/\/neartoken\.cc/.test(html)));
+test('错误动作只发送一次，不通过网页兜底重发订单',async()=>{const t=setup();let calls=0;await t.c.act('创建订单',async()=>{calls++;throw Error('网络失败')});assert.equal(calls,1)});
