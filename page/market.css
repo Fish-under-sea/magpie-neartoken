@@ -483,3 +483,16 @@
   .lg-row { grid-template-columns: 1fr 1fr 1.4fr .6fr .8fr; }
   .lg-row > span:nth-child(n+6) { display: none; }
 }
+
+/* 逐条日志单元格 */
+.lg-cell-stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lg-tag { display: inline-block; font-size: 9.5px; padding: 0 5px; border-radius: 5px; width: fit-content; }
+.lg-tag.ok { color: #4cc38a; background: rgba(76,195,138,.12); }
+.lg-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; padding: 1px 7px; border: 1px solid var(--nt-line); border-radius: 999px; color: var(--nt-ink); width: fit-content; }
+.lg-group { font-size: 9.5px; color: #4cc38a; }
+.lg-model { font-size: 11.5px; color: var(--nt-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-effort { font-size: 10px; color: #e0b34a; }
+.lg-sub { font-size: 9.5px; color: var(--nt-faint); font-family: var(--nt-code); }
+.lg-time b { font-family: var(--nt-code); color: var(--nt-ink); font-weight: 600; }
+.lg-time span { font-size: 10px; color: var(--nt-muted); margin-right: 6px; }
+.lg-detail { font-size: 10px; color: var(--nt-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

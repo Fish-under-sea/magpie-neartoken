@@ -1587,6 +1587,14 @@
       el('button', { class: 'lg-btn', title: '展开或收起分布', onclick: () => { logExpanded = !logExpanded; render() } },
         logExpanded ? '收起 ▴' : '展开 ▾'))
 
+    // 宿主若给出逐条流水（data.rows），按上游 9 列完整渲染；否则退回按模型汇总。
+    const detailRows = Array.isArray(data?.rows) ? data.rows : null
+    const fmtBytes = (n) => {
+      const v = Number(n) || 0
+      if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB'
+      if (v >= 1024) return (v / 1024).toFixed(1) + ' KB'
+      return Math.round(v) + ' B'
+    }
     const all = (data?.models || []).slice().sort((a, b) => b.tokens - a.tokens)
     const total = all.reduce((sum, m) => sum + m.tokens, 0) || 1
     const q = logQuery.trim().toLowerCase()
@@ -1622,6 +1630,36 @@
       return el('section', { class: 'logs' },
         el('h2', { class: 'logs-title', text: '通用日志' }), toolbar, statbar,
         el('p', { class: 'note warn', text: data.reason === 'unreachable' ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' }))
+    }
+
+    if (detailRows && detailRows.length) {
+      const colsD = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
+      const body = detailRows.map((r) => el('div', { class: 'lg-row' },
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { text: String(r.time || '') }),
+          el('span', { class: 'lg-tag ok', text: r.kind || '消耗' })),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'lg-pill', text: '🔗 ' + (r.tokenName || '—') }),
+          r.group ? el('span', { class: 'lg-group' }, groupBadge(r.group)) : null),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'lg-model', text: r.model || '—' }),
+          r.effort ? el('span', { class: 'lg-effort', text: r.effort }) : null),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { text: '流' }),
+          el('span', { class: 'lg-sub', text: (r.tps ? r.tps + ' t/s' : '—') })),
+        el('span', { class: 'num', text: (r.input != null ? compact(r.input) : '—') + ' / ' + (r.output != null ? compact(r.output) : '—') }),
+        el('span', { class: 'num', text: r.bytes != null ? fmtBytes(r.bytes) : '—' }),
+        el('span', { class: 'num', text: r.cost || '—' }),
+        el('span', { class: 'lg-cell-stack lg-time' },
+          el('span', null, '首字 ', el('b', { text: r.ttft || '—' })),
+          el('span', null, '耗时 ', el('b', { text: r.dur || '—' }))),
+        el('span', { class: 'lg-detail', text: r.detail || '—' })))
+      return el('section', { class: 'logs' },
+        el('h2', { class: 'logs-title', text: '通用日志' }),
+        toolbar, statbar, logExpanded ? dist : null,
+        el('div', { class: 'lg-table-wrap' }, el('div', { class: 'lg-table' },
+          el('div', { class: 'lg-row head' }, colsD.map((c) => el('span', { text: c }))), body)),
+        el('p', { class: 'note', text: '数据来自站点逐条日志。' }))
     }
 
     const cols = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
