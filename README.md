@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.6.7**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**0.6.8**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.7.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.8.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,13 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 0.6.8 分组级启停修正与模型名裸显示
+
+- 启停状态改为「只记停用例外」：`options.disabledByGroup` 只在某模型于某分组被停用时才写一条，默认全部分组启用。旧版把每个模型在哪些分组启用整张表写进 options，体积大且一旦主形态不符（缺记录 / 形状不对 / 写入失败）就会把模型整体判成停用——表现就是「重进页面已启用变停用」和「供应商模型表空掉、看起来掉出」。
+- 读取侧同步容错：`disabledByGroup` 形状不合法一律当没有记录；旧的 `enabledByGroup` 仍兼容，但不合法时绝不把模型判成停用。写回时顺带清掉旧的大字段，避免宿主里留过期映射。
+- magpie 原生模型选择列表只显示模型名，不再带「分组 + 倍率 · 名称」前缀；分组与倍率仍通过 `x-neartoken-group` 走路由，不丢信息。
+- 插件页内的分组状态、说明横幅、定价 / 端点筛选、品牌图标与小标签配色保持 0.6.7 的行为。
 
 ## 0.6.7 分组状态、分组级启停与筛选补齐
 
