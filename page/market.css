@@ -68,12 +68,20 @@
 }
 .market-chip .ratio { font-family: var(--nt-code); color: var(--nt-faint); font-size: 10px; }
 .market-chip .gb { display: inline-flex; align-items: center; gap: 3px; }
-.gb-tag { padding: 1px 4px; border-radius: 4px; font-size: 9.5px; color: #fff; }
-.gb-tag.green { background: #2f8f68; }
+/* 小标签统一成「低价」那一种样式：同一尺寸、圆角、字重与描边，只换底色。 */
+.gb-tag {
+  padding: 1px 5px; border-radius: 4px; font-size: 9.5px; line-height: 1.5;
+  font-weight: 700; color: #fff; opacity: 1;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.28);
+}
+.gb-tag.lvl1, .gb-tag.lvl2, .gb-tag.green { background: #2f8f68; }
 .gb-tag.red { background: #b0475c; }
 .gb-tag.pink { background: #8b4f9e; }
 .gb-tag.blue { background: #3f6fa8; }
 .gb-tag.plain { background: #5a6270; }
+.gb-tag.gold { background: #b58a2b; }
+.gb-tag.slate { background: #4a5568; }
+.gb-tag.cyan { background: #3f8fa3; }
 .gb-rest { color: var(--nt-ink); }
 
 .chip-toggle {
@@ -114,9 +122,6 @@
 .mc.on .mc-flag { color: var(--nt-accent); font-weight: 600; }
 
 /* 两级标签：功能在前（饱和色），价格/品质在后（柔和色） */
-.gb-tag.lvl1 { font-weight: 700; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
-.gb-tag.lvl2 { opacity: .82; }
-.gb-tag.lead { font-weight: 700; opacity: 1; box-shadow: 0 0 0 1px rgba(255,255,255,.32); }
 .gb-tag.purple { background: #7b52b8; }
 .gb-tag.teal { background: #2f8f8a; }
 .chip-group-name.low { color: #4cc38a; font-weight: 700; font-size: 11px; }
@@ -128,7 +133,42 @@
 .chip-group-name.empty { color: var(--nt-faint); font-weight: 600; font-size: 11px; }
 .market-chip.none { opacity: .45; cursor: default; pointer-events: none; }
 .chip-group { width: 100%; margin: 2px 0 4px; }
-.chip-group-name { font-size: 11px; font-weight: 700; color: var(--nt-faint); margin: 6px 0 3px; letter-spacing: .04em; }
+.chip-group-name { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; font-size: 11px; font-weight: 700; color: var(--nt-faint); margin: 6px 0 3px; letter-spacing: .04em; }
+.chip-group-count { font-family: var(--nt-code); font-size: 10px; font-weight: 600; color: var(--nt-faint); letter-spacing: 0; }
+
+/* 分组 chip 保持原单行胶囊，不加任何竖条：
+   含启用模型的整块淡绿提亮，全停的整体灰化；蓝框仍专用于当前筛选。 */
+.market-chip.group-chip.has-enabled:not(.on) {
+  border-color: rgba(76,195,138,.55); background: rgba(76,195,138,.10); color: var(--nt-ink);
+}
+/* 没有模型走这一组分时明确「熄灭」：降透明 + 去色，避免彩色标签看起来仍像已启用。 */
+.market-chip.group-chip.all-off { opacity: .38; filter: grayscale(.85); }
+.market-chip.group-chip.all-off:hover { opacity: .55; filter: grayscale(.5); }
+
+/* 选中分组的横幅：与官网一致，标签 + 倍率 + 说明，横跨模型区顶部。 */
+.market-group-banner {
+  border: 1px solid var(--nt-line); border-radius: 12px;
+  background: rgba(255,255,255,.03); padding: 10px 14px; margin: 0 0 12px;
+}
+.mgb-head { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.mgb-head .gb { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.mgb-head .gb-tag { flex: none; }
+.mgb-head .gb-rest { color: var(--nt-ink); font-weight: 700; }
+.mgb-head .ratio { font-family: var(--nt-code); font-size: 11px; color: var(--nt-muted); }
+.mgb-desc { margin: 6px 0 0; font-size: 12px; line-height: 1.55; color: var(--nt-muted); }
+
+/* 供应商 chip：品牌图标在前，名称与模型数在后，和官网供应商面板一致。 */
+.market-chip.vendor-chip { gap: 5px; }
+.market-chip .vendor-icon {
+  width: 16px; height: 16px; flex: none; object-fit: contain; border-radius: 3px;
+}
+.market-chip .vendor-icon-fallback {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; background: var(--nt-line); color: var(--nt-muted);
+}
+.market-chip .vendor-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.market-chip .vendor-count { flex: none; font-family: var(--nt-code); font-size: 10px; color: var(--nt-faint); }
+.market-chip.vendor-chip.on .vendor-count { color: var(--nt-ink); }
 
 /* 充值卡：站点「添加资金」缩小版 */
 .tp-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--nt-line); margin-bottom: 8px; }

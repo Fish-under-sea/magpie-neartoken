@@ -144,6 +144,7 @@
       const raw = options.disabledModels
       disabledModels = Array.isArray(raw) ? new Set(raw)
         : (typeof raw === 'string' && raw.trim() ? new Set((() => { try { return JSON.parse(raw) } catch { return [] } })()) : new Set())
+      initEnabledByGroup()
       await load()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
@@ -241,6 +242,7 @@
     if (pendingAct) frag.append(el('p', { class: 'note', text: '正在处理：' + pendingAct }))
     body.replaceChildren(frag)
     if (tab === 'market' && view.configured && !view.pending) {
+      paintGroupBanner()
       refreshMarketList()
       if (scroll) {
         body.querySelector('.market-aside').scrollTop = scroll.aside
@@ -547,12 +549,28 @@
   let marketMode = 'standard'
   let marketSort = 'latest'
   let marketLayout = 'grid'
+  let marketQuota = 'all'
+  let marketEndpoint = 'all'
   let logQuery = ''
   let logGroup = ''
   let logKind = 'all'
   let logExpanded = false
   const marketVendors = new Set()
+  const MARKET_QUOTA = [['all', '所有模型'], ['token', '按量计费'], ['request', '按次计费'], ['task', '任务计费']]
+  const MARKET_ENDPOINTS = [['all', '所有类型'], ['openai', 'Chat'], ['openai-response', 'Response'], ['anthropic', 'Anthropic'], ['gemini', 'Gemini'], ['jina-rerank', 'Rerank'], ['image-generation', '图片'], ['embedding', '嵌入'], ['openai-video', '视频']]
   const MARKET_KINDS = [['all', '全部'], ['chat', '对话'], ['image', '生图'], ['video', '视频'], ['audio', '语音'], ['embedding', '向量']]
+
+  /** 任务计费：站点给了用量 schema，按次或按秒算，与官网「任务计费」同口径。 */
+  function isTaskModel(m) {
+    const t = m?.billing_usage_schema
+    return !!t && typeof t === 'object' && Object.keys(t).length > 0
+  }
+
+  /** 官网定价类型：任务优先，其次按次（quota_type 1），其余按量。 */
+  function quotaKindOf(m) {
+    if (isTaskModel(m)) return 'task'
+    return Number(m?.quota_type) === 1 ? 'request' : 'token'
+  }
 
   /** pricing 是包内静态快照（插件运行时会把实时目录覆盖进同一个文件）。 */
   function pricing() {
@@ -708,7 +726,7 @@
     return i === -1 ? 99 : i
   }
 
-  /** groupTags 把 [低价][满血] GPT Pro 2 拆成功能 / 价格 / 余下文字，供排序与重绘。 */
+  /** groupTags 把 [低价][满血] GPT Pro 2 拆成功能 / 价格 / 其他标签 / 余下文字。 */
   function groupTags(name) {
     const raw = String(name || '')
     const parts = (raw.match(/\[[^\]]+\]/g) || []).map((p) => p.slice(1, -1))
@@ -717,10 +735,13 @@
     // 功能标签按分组下实际模型的端点推导；站点改目录后自动跟着变
     const func = KIND_SERIES[groupKind(name)] || '对话'
     // 官Key 是独立档位，标签里不再挂「满血」（[满血][官Key] → 官Key）
-    let price = parts.filter((p) => PRICE_TAGS.some((k) => p.toLowerCase().includes(k.toLowerCase())))
-    if (/官Key|官key/i.test(all)) price = price.filter((p) => !/满血/.test(p))
+    const price = parts.filter((p) => PRICE_TAGS.some((k) => p.toLowerCase().includes(k.toLowerCase())))
     price.sort((a, b) => leadRank(a) - leadRank(b))
-    return { func, price, rest, lead: price[0] || '' }
+    // 功能词由功能标签表达，不再重复成小标签（生图 / 图片 / 视频 / 语音 / 向量）
+    const FUNC_WORDS = /^(生图|图片|图像|视频|语音|音频|向量|嵌入)$/
+    // 站点自己的其它标签（🥚 / ?? / AIS 等）照抄显示，不能丢
+    const extra = parts.filter((p) => !price.includes(p) && p !== func && !FUNC_WORDS.test(p))
+    return { func, price, extra, rest, lead: price[0] || '' }
   }
 
   /** groupBadge 按「功能 → 价格」两级重绘；首标签单独加 .lead 作视觉区分。 */
@@ -729,14 +750,17 @@
     const tone = { '图片': 'pink', '视频': 'blue', '音频': 'purple', '向量': 'teal', '对话': 'plain' }
     const colorOf = (w) => {
       if (/满血|原生|特惠/i.test(w)) return 'red'
-      if (/低价|反重力|神秘|自有|国模/i.test(w)) return 'green'
+      if (/反重力/i.test(w)) return 'cyan'
+      if (/低价|神秘|自有|国模/i.test(w)) return 'green'
       if (/促销|生图|Kiro|灵车/i.test(w)) return 'pink'
       if (/备用|官Key|官key|CC|Argon|GPT Pro|视频|向量/i.test(w)) return 'blue'
       return 'plain'
     }
+    const extraTone = (w) => (/🥚|蛋/i.test(w) ? 'gold' : /\?\?/.test(w) ? 'slate' : 'plain')
     return el('span', { class: 'gb' },
       // 功能标签只在非对话类显示；对话是默认，不重复挂
       t.func === '对话' ? null : el('span', { class: 'gb-tag lvl1 ' + (tone[t.func] || 'plain'), text: t.func }),
+      t.extra.map((w) => el('span', { class: 'gb-tag lvl2 ' + extraTone(w), text: w })),
       t.price.map((w, i) => el('span', {
         class: 'gb-tag lvl2 ' + colorOf(w) + (i === 0 ? ' lead' : ''),
         text: w,
@@ -964,11 +988,12 @@
       }
       return rank(a) - rank(b) || a.localeCompare(b, 'zh')
     })
+    // 选定分组时只显示该组；「所有分组」时显示首个分组，其余折叠成 +N。
     const visibleGroups = marketGroup ? groups.filter((g) => g === marketGroup) : groups
     const shownGroups = visibleGroups.slice(0, 1)
     const more = visibleGroups.length - shownGroups.length
     const kind = marketKindOf(m)
-    const on = !disabledModels.has(m.name)
+    const on = isOn(m)
     const priceRow = p.unconfigured || p.unsupported
       ? el('p', { class: 'note', text: p.unconfigured ? '按用量计费 · 价格未配置' : '动态计费 · 请查看官网详情中的完整规则' })
       : p.entries
@@ -999,7 +1024,7 @@
         el('span', { class: 'mc-flag', text: on ? '✓ 已启用' : '○ 未启用' }),
         el('button', {
           class: 'mc-copy', title: '复制模型 ID',
-          onclick: (e) => { e.stopPropagation(); copy(m.name) },
+          onclick: (e) => { e.stopPropagation(); copyModelId(m.name, e.currentTarget) },
         }, '⧉')),
       el('p', { class: 'mc-desc', text: m.description || '暂无描述。' }),
       el('div', { class: 'mc-billing ' + (p.tiered ? 'dyn' : 'flat'), text: p.unconfigured ? '按用量计费' : p.tiered ? '动态计费' : p.perCall !== undefined ? '按次计费' : '按量计费' }),
@@ -1048,6 +1073,8 @@
     let list = p.models.slice()
     if (marketGroup) list = list.filter((m) => (m.enable_groups || []).includes(marketGroup))
     if (marketKind !== 'all') list = list.filter((m) => marketKindOf(m) === marketKind)
+    if (marketQuota !== 'all') list = list.filter((m) => quotaKindOf(m) === marketQuota)
+    if (marketEndpoint !== 'all') list = list.filter((m) => (m.supported_endpoint_types || []).includes(marketEndpoint))
     if (marketVendors.size) list = list.filter((m) => marketVendors.has(String(m.vendor_id)))
     const q = marketQuery.trim().toLowerCase()
     if (q) list = list.filter((m) => [m.name, vendorOf(m.vendor_id), m.description, m.tags,
@@ -1088,7 +1115,7 @@
 
   /** 筛选与工具条原位更新，保留侧栏节点、滚动位置及键盘焦点。 */
   function refreshMarketView() {
-    const states = { mode: marketMode, unit: marketUnit, sort: marketSort, layout: marketLayout }
+    const states = { mode: marketMode, unit: marketUnit, sort: marketSort, layout: marketLayout, quota: marketQuota, endpoint: marketEndpoint }
     document.querySelectorAll('.market [data-market-group], .market [data-market-kind], .market [data-market-vendor], .market [data-market-setting]').forEach((button) => {
       const d = button.dataset
       const on = d.marketGroup !== undefined ? marketGroup === d.marketGroup
@@ -1098,7 +1125,146 @@
       button.classList.toggle('on', on)
       button.setAttribute('aria-pressed', String(on))
     })
+    // 模型启停会改变各分组的启用数：原位同步状态条、提示与档位计数，
+    // 不重建侧栏节点，保留滚动位置和键盘焦点。
+    const snap = pricing()
+    if (snap) {
+      const stats = groupEnableStats(snap)
+      document.querySelectorAll('.market [data-market-group].group-chip').forEach((button) => {
+        const item = groupChipModel(snap, button.dataset.marketGroup, marketGroup, stats)
+        button.classList.remove('has-enabled', 'all-off')
+        if (item.className.includes('has-enabled')) button.classList.add('has-enabled')
+        if (item.className.includes('all-off')) button.classList.add('all-off')
+        button.title = item.title
+      })
+      document.querySelectorAll('.market .chip-group-count[data-band-items]').forEach((node) => {
+        const items = JSON.parse(node.dataset.bandItems)
+        node.textContent = bandActiveCount(items, stats) + '/' + items.length
+      })
+    }
+    paintGroupBanner()
     refreshMarketList()
+  }
+
+  /** 模型最便宜的分组：catalog 默认就按这一组路由。 */
+  function cheapestGroup(m, ratios = pricing()?.groups) {
+    const groups = (m?.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
+    if (!groups.length) return ''
+    return groups.slice().sort((a, b) => {
+      const ra = Number(ratios?.[a])
+      const rb = Number(ratios?.[b])
+      const va = Number.isFinite(ra) && ra > 0 ? ra : 1e9
+      const vb = Number.isFinite(rb) && rb > 0 ? rb : 1e9
+      return va - vb || a.localeCompare(b, 'zh')
+    })[0]
+  }
+
+  /** enabledByGroup: 模型 → 它在哪些分组里启用。默认只有最便宜的那一组。 */
+  const enabledByGroup = new Map()
+
+  /** 当前视图下这个模型用哪个分组判定启停：选定分组就用它，否则用最便宜那一组。 */
+  function viewGroup(m) {
+    return marketGroup || cheapestGroup(m)
+  }
+
+  /** 模型在当前视图分组里是否启用。 */
+  function isOn(m) {
+    const set = enabledByGroup.get(m?.name)
+    return !!set && set.has(viewGroup(m))
+  }
+
+  /** 按「分组 × 模型」的真实归属统计；启用与否按分组级状态判断。 */
+  function groupEnableStats(p) {
+    const out = new Map()
+    for (const g of Object.keys(p?.groups || {})) out.set(g, { total: 0, enabled: 0 })
+    for (const m of p?.models || []) {
+      const set = enabledByGroup.get(m.name)
+      for (const raw of m?.enable_groups || []) {
+        const g = String(raw ?? '').trim()
+        if (!g) continue
+        const row = out.get(g) || { total: 0, enabled: 0 }
+        row.total++
+        if (set && set.has(g)) row.enabled++
+        out.set(g, row)
+      }
+    }
+    return out
+  }
+
+  /** 载入启用状态：旧版全局 disabledModels 迁移为「所有分组都关」。 */
+  function initEnabledByGroup() {
+    const p = pricing()
+    if (!p) return
+    let stored = options.enabledByGroup
+    if (typeof stored === 'string' && stored.trim()) {
+      try { stored = JSON.parse(stored) } catch { stored = null }
+    }
+    const has = (name) => stored && typeof stored === 'object' && Object.prototype.hasOwnProperty.call(stored, name)
+    for (const m of p.models) {
+      if (has(m.name)) {
+        enabledByGroup.set(m.name, new Set(Array.isArray(stored[m.name]) ? stored[m.name] : []))
+        continue
+      }
+      // 没有记录时按「全选」处理：模型在它列出的每个分组里都算启用。
+      const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
+      enabledByGroup.set(m.name, new Set(all))
+    }
+    for (const name of disabledModels) enabledByGroup.set(name, new Set())
+  }
+
+  /** 官网给分组的说明；没有就返回空串，不编内容。 */
+  function groupNote(p, g) {
+    const n = p?.notes?.[g]
+    return typeof n === 'string' ? n.trim() : ''
+  }
+
+  /** 侧栏分组 chip 的展示模型：启用状态与提示文本（说明文字走右侧横幅）。 */
+  function groupChipModel(p, g, currentGroup, stats) {
+    const row = stats.get(g) || { total: 0, enabled: 0 }
+    const note = groupNote(p, g)
+    // 没有启用模型就一律灰化：否则没有主分组模型的分组永远不带状态类，看起来「不受控制」。
+    const state = row.enabled > 0 ? ' has-enabled' : ' all-off'
+    const count = row.total ? '启用 ' + row.enabled + '/' + row.total + ' 个模型' : '该分组暂无模型'
+    return {
+      className: 'market-chip group-chip' + (currentGroup === g ? ' on' : '') + state,
+      title: [note, count].filter(Boolean).join('\n'),
+    }
+  }
+
+  /** 选中的分组在右侧模型区顶部显示一条横幅：标签 + 倍率 + 官网说明。 */
+  function paintGroupBanner() {
+    const box = document.getElementById('market-banner')
+    if (!box) return
+    const p = pricing()
+    if (!p || !marketGroup) {
+      box.hidden = true
+      box.replaceChildren()
+      return
+    }
+    const ratio = Number(p.groups?.[marketGroup]) || 0
+    const note = groupNote(p, marketGroup)
+    box.hidden = false
+    box.replaceChildren(el('div', { class: 'market-group-banner' },
+      el('div', { class: 'mgb-head' },
+        groupBadge(marketGroup),
+        ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null),
+      note ? el('p', { class: 'mgb-desc', text: note }) : null))
+  }
+
+  /** 档位头部只数「含启用模型」的分组。 */
+  function bandActiveCount(items, stats) {
+    return items.filter((g) => (stats.get(g)?.enabled || 0) > 0).length
+  }
+
+  /** 站点 /api/pricing 的 vendor.icon 对应包内 vendor-icons/<icon>.svg。 */
+  function vendorIconModel(v, p) {
+    const icon = typeof v?.icon === 'string' ? v.icon.trim() : ''
+    const count = (p?.models || []).filter((m) => String(m.vendor_id) === String(v.id)).length
+    return {
+      src: icon ? 'vendor-icons/' + encodeURIComponent(icon) + '.svg' : '',
+      fallback: icon ? '' : String(v?.name || '?').slice(0, 1),
+      count,
+    }
   }
 
   /** marketCard 是广场整页：顶部工具条 + 左筛选 + 右卡片网格。 */
@@ -1121,6 +1287,7 @@
     const BAND_ORDER = ['低价', '官Key', '满血', '其他']
     const FUNC_BANDS = [['image', '图片'], ['video', '视频'], ['audio', '音频'], ['embedding', '向量']]
     const allGroups = Object.keys(p?.groups || {})
+    const groupStats = groupEnableStats(p)
     const byRatio = (a, b) => (Number(p.groups[a]) || 0) - (Number(p.groups[b]) || 0) || a.localeCompare(b, 'zh')
     // 空分组也按名字归到对应档（如 [低价][满血] Gemini Ultra 属满血），
     // 不另设「暂无模型」档，避免把满血组丢到最后。
@@ -1142,8 +1309,9 @@
         'aria-pressed': String(cur === k), onclick: () => { onPick(k); refreshMarketView() },
       }, label)))
     const total = p?.models?.length || 0
-    const allOn = disabledModels.size === 0
-    const allOff = total > 0 && disabledModels.size >= total
+    const onCount = (p?.models || []).filter((m) => isOn(m)).length
+    const allOn = total > 0 && onCount >= total
+    const allOff = total > 0 && onCount === 0
     const tools = el('div', { class: 'market-tools' },
       el('div', { class: 'market-seg' },
         el('button', {
@@ -1177,14 +1345,21 @@
     })).filter((b) => b.items.length)
     const chipOf = (g) => {
       const ratio = Number(p.groups[g]) || 0
+      const item = groupChipModel(p, g, marketGroup, groupStats)
       return el('button', {
-        class: 'market-chip' + (marketGroup === g ? ' on' : ''),
-        title: '按这个分组筛选', 'data-market-group': g, 'aria-pressed': String(marketGroup === g),
+        class: item.className,
+        title: item.title, 'data-market-group': g, 'aria-pressed': String(marketGroup === g),
         onclick: () => { marketGroup = marketGroup === g ? '' : g; refreshMarketView() },
       }, groupBadge(g), ratio > 0 ? el('span', { class: 'ratio', text: 'x' + ratioText(ratio) }) : null)
     }
+    const bandHead = (name, tone, items) => el('div', { class: 'chip-group-name ' + tone },
+      el('span', { text: name }),
+      el('span', {
+        class: 'chip-group-count', 'data-band-items': JSON.stringify(items),
+        text: bandActiveCount(items, groupStats) + '/' + items.length,
+      }))
     const bandEl = (b) => el('div', { class: 'chip-group' },
-      el('div', { class: 'chip-group-name ' + b.tone, text: b.name }),
+      bandHead(b.name, b.tone, b.items),
       el('div', { class: 'market-chips' }, b.items.map(chipOf)))
     const groupChips = el('div', { class: 'market-chips' },
       el('button', {
@@ -1192,7 +1367,7 @@
       }, '所有分组'),
       // 鸡蛋🥚 永远第一档
       el('div', { class: 'chip-group' },
-        el('div', { class: 'chip-group-name egg', text: '鸡蛋🥚' }),
+        bandHead('鸡蛋🥚', 'egg', eggGroups),
         el('div', { class: 'market-chips' }, eggGroups.length
           ? eggGroups.map(chipOf)
           : [el('span', { class: 'market-chip none', text: '暂无' })])),
@@ -1204,29 +1379,57 @@
         'data-market-kind': k, 'aria-pressed': String(marketKind === k),
         onclick: () => { marketKind = k; refreshMarketView() },
       }, label)))
+    const countOf = (predicate) => (p?.models || []).filter(predicate).length
+    const chipCount = (value, label) => el('span', { class: 'vendor-count', text: String(value) })
+    const quotaChips = el('div', { class: 'market-chips chips-row' },
+      MARKET_QUOTA.map(([k, label]) => el('button', {
+        class: 'market-chip' + (marketQuota === k ? ' on' : ''),
+        'data-market-setting': 'quota', 'data-market-value': k, 'aria-pressed': String(marketQuota === k),
+        onclick: () => { marketQuota = k; refreshMarketView() },
+      }, el('span', { text: label }), chipCount(k === 'all' ? countOf(() => true) : countOf((m) => quotaKindOf(m) === k), label))))
+    const endpointChips = el('div', { class: 'market-chips chips-row' },
+      MARKET_ENDPOINTS.map(([k, label]) => el('button', {
+        class: 'market-chip' + (marketEndpoint === k ? ' on' : ''),
+        'data-market-setting': 'endpoint', 'data-market-value': k, 'aria-pressed': String(marketEndpoint === k),
+        onclick: () => { marketEndpoint = k; refreshMarketView() },
+      }, el('span', { text: label }), chipCount(k === 'all' ? countOf(() => true) : countOf((m) => (m.supported_endpoint_types || []).includes(k)), label))))
     const vendorChips = el('div', { class: 'market-chips chips-row' },
-      vendors.map((v) => el('button', {
-        class: 'market-chip' + (marketVendors.has(String(v.id)) ? ' on' : ''),
-        'data-market-vendor': String(v.id), 'aria-pressed': String(marketVendors.has(String(v.id))),
-        onclick: () => {
-          const id = String(v.id)
-          if (marketVendors.has(id)) marketVendors.delete(id)
-          else marketVendors.add(id)
-          refreshMarketView()
+      vendors.map((v) => {
+        const item = vendorIconModel(v, p)
+        return el('button', {
+          class: 'market-chip vendor-chip' + (marketVendors.has(String(v.id)) ? ' on' : ''),
+          'data-market-vendor': String(v.id), 'aria-pressed': String(marketVendors.has(String(v.id))),
+          onclick: () => {
+            const id = String(v.id)
+            if (marketVendors.has(id)) marketVendors.delete(id)
+            else marketVendors.add(id)
+            refreshMarketView()
+          },
         },
-      }, v.name)))
+          item.src
+            ? el('img', {
+              class: 'vendor-icon', src: item.src, alt: '', width: 16, height: 16, loading: 'lazy',
+              onerror: (e) => { e.target.style.visibility = 'hidden' },
+            })
+            : el('span', { class: 'vendor-icon vendor-icon-fallback', text: item.fallback }),
+          el('span', { class: 'vendor-name', text: v.name }),
+          item.count > 0 ? el('span', { class: 'vendor-count', text: String(item.count) }) : null)
+      }))
     const aside = el('aside', { class: 'market-aside' },
       el('div', { class: 'ma-head' },
         el('h3', { text: '筛选' }),
-        el('button', { class: 'link', onclick: () => { marketQuery = ''; marketGroup = ''; marketKind = 'all'; marketVendors.clear(); search.value = ''; refreshMarketView() } }, '↺ 重置')),
+        el('button', { class: 'link', onclick: () => { marketQuery = ''; marketGroup = ''; marketKind = 'all'; marketQuota = 'all'; marketEndpoint = 'all'; marketVendors.clear(); search.value = ''; refreshMarketView() } }, '↺ 重置')),
       el('p', { class: 'note', text: '按供应商、分组、类型和标签细化搜索模型。' }),
       el('h4', { text: '分组' }), groupChips,
       el('h4', { text: '类型' }), kinds,
-      el('h4', { text: '供应商' }), vendorChips)
+      el('h4', { text: '供应商' }), vendorChips,
+      el('h4', { text: '定价类型' }), quotaChips,
+      el('h4', { text: '端点类型' }), endpointChips)
     const off = disabledModels.size
     const body = el('div', { class: 'market-body' },
       aside,
       el('div', { class: 'market-main' },
+        el('div', { id: 'market-banner', hidden: true }),
         el('div', { class: 'market-count', id: 'market-count', text: (p?.models?.length || 0) + ' 个模型' + (syncedAt() ? ' · 同步 ' + syncedAt() : '') }),
         el('div', { class: 'model-grid', id: 'market-list' }),
         el('p', { class: 'note', text: off
@@ -1319,21 +1522,38 @@
       el('div', { class: 'logs-table-wrap' }, table),
       el('p', { class: 'note', text: '数字来自站点用量端点，按模型汇总；站点未提供逐条流水，故「流 / 请求体大小 / 耗时」留空。' }))
   }
-  /** toggleModel 翻转一个模型的启用状态，并写回 plugin options。 */
+  /** toggleModel 只翻转「当前视图分组」里的启用状态，同一模型在别组不受影响。 */
   async function toggleModel(name) {
-    if (!name) return
-    if (disabledModels.has(name)) disabledModels.delete(name)
-    else disabledModels.add(name)
-    refreshMarketList()
+    const m = pricing()?.models.find((x) => x.name === name)
+    if (!m) return
+    const g = viewGroup(m)
+    if (!g) return
+    const set = new Set(enabledByGroup.get(name) || [])
+    if (set.has(g)) set.delete(g)
+    else set.add(g)
+    enabledByGroup.set(name, set)
+    refreshMarketView()
     await saveDisabled()
   }
 
-  /** setAll 全选 / 全不选：双状态按钮都走这里。 */
+  /** setAll 全选 / 全不选：有选定分组只作用于该组，否则作用于每个模型的最便宜组。 */
   async function setAll(enable) {
     const p = pricing()
     if (!p) return
-    if (enable) disabledModels.clear()
-    else p.models.forEach((m) => disabledModels.add(m.name))
+    if (marketGroup) {
+      for (const m of p.models) {
+        if (!(m.enable_groups || []).includes(marketGroup)) continue
+        const set = new Set(enabledByGroup.get(m.name) || [])
+        if (enable) set.add(marketGroup)
+        else set.delete(marketGroup)
+        enabledByGroup.set(m.name, set)
+      }
+    } else {
+      for (const m of p.models) {
+        const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
+        enabledByGroup.set(m.name, enable ? new Set(all) : new Set())
+      }
+    }
     render()
     await saveDisabled()
   }
@@ -1352,7 +1572,8 @@
     if (sending) { sendAgain = true; return }
     sending = true
     try {
-      const next = await bridge.options.set({ ...options, disabledModels: [...disabledModels] })
+      const byGroup = Object.fromEntries([...enabledByGroup].map(([k, v]) => [k, [...v]]))
+      const next = await bridge.options.set({ ...options, enabledByGroup: byGroup })
       if (next && typeof next === 'object') options = next
       lastError = ''
     } catch {
@@ -1403,6 +1624,39 @@
       await new Promise((r) => setTimeout(r, 300))
       return null
     })
+  }
+
+  /** 复制模型 ID：优先剪贴板 API，受限时回退 textarea + execCommand，并给按钮即时反馈。 */
+  async function copyModelId(text, btn) {
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } catch (_) {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.setAttribute('readonly', '')
+        ta.style.position = 'fixed'
+        ta.style.top = '-1000px'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        ta.setSelectionRange(0, text.length)
+        ok = document.execCommand('copy')
+        ta.remove()
+      } catch (_e) {
+        ok = false
+      }
+    }
+    if (btn) {
+      const prev = btn.textContent
+      btn.textContent = ok ? '✓' : '⧉'
+      btn.title = (ok ? '已复制 ' : '复制失败，请手动复制 ') + text
+      clearTimeout(btn.__copyTimer)
+      btn.__copyTimer = setTimeout(() => { btn.textContent = prev }, 900)
+    }
+    return ok
   }
 
   async function copy(text) {

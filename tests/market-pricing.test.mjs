@@ -9,7 +9,7 @@ const model={name:'claude-fable-5',quota_type:0,model_ratio:5,completion_ratio:5
 const groups={'[🥚] Claude':0.5,'[低价][满血] Claude 原生':1.5,'[满血] CC 不降智精选':1.8};
 function context(group='',mode='standard',currency={}) {
   let toggles=0;
-  const value={marketGroup:group,marketMode:mode,marketUnit:'M',pricing:()=>({groups,currency}),URL,Intl,disabledModels:new Set(),el:(tag,attrs,...children)=>({tag,attrs:attrs||{},children:children.flat(Infinity).filter(Boolean)}),groupBadge:name=>({tag:'badge',name,children:[]}),groupKind:()=>'chat',marketKindOf:()=>'chat',vendorOf:()=>'Anthropic',affURL:x=>x,toggleModel:()=>toggles++,copy:()=>{}};
+  const value={marketGroup:group,marketMode:mode,marketUnit:'M',pricing:()=>({groups,currency}),URL,Intl,disabledModels:new Set(),isOn:()=>true,el:(tag,attrs,...children)=>({tag,attrs:attrs||{},children:children.flat(Infinity).filter(Boolean)}),groupBadge:name=>({tag:'badge',name,children:[]}),groupKind:()=>'chat',marketKindOf:()=>'chat',vendorOf:()=>'Anthropic',affURL:x=>x,toggleModel:()=>toggles++,copy:()=>{}};
   const c=vm.createContext(value);vm.runInContext(functions,c);return {c,toggles:()=>toggles};
 }
 function price(m,group='',mode='standard',currency={}){return context(group,mode,currency).c.priceOf(m)}
