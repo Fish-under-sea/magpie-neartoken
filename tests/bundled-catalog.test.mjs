@@ -22,10 +22,9 @@ test('兜底模型仍带分组路由头与分类信息', async () => {
   assert.ok(one.capabilities && one.capabilities.output)
 })
 
-test('禁用集合仍作用于兜底模型表', async () => {
-  const disabled = new Set(['claude-fable-5'])
-  const plugin2 = await mod.default({}, { disabledModels: [...disabled] })
+test('旧 disabledModels 不再过滤模型（启停改由 prefs 文件）', async () => {
+  const plugin2 = await mod.default({}, { disabledModels: ['claude-fable-5'] })
   const models = await plugin2.provider.models()
-  assert.equal(models['claude-fable-5'], undefined)
+  assert.ok(models['claude-fable-5'], '不应再按旧字段把模型过滤掉')
   assert.ok(Object.keys(models).length > 50)
 })

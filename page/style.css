@@ -487,3 +487,10 @@ select {
 }
 .update-note.new { color: var(--nt-accent); }
 .update-note.warn { color: var(--nt-warn, #e0a44a); }
+/* 断开连接：与「已连接」同款胶囊，底色标红 */
+button.chip.danger {
+  height: 26px; padding: 0 12px; border-radius: 999px; cursor: pointer;
+  color: #ff8b98; border: 1px solid rgba(224,107,122,.5);
+  background: rgba(224,107,122,.14);
+}
+button.chip.danger:hover:not(:disabled) { background: rgba(224,107,122,.24); color: #ffd7dc; }

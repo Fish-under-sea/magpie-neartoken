@@ -54,6 +54,16 @@ test('模型在原生列表里只显示模型名', async () => {
   assert.equal(m.img1.name, 'img1')
 })
 
+test('page/prefs.json 里的停用分组会让该模型从表里消失', async () => {
+  fs.writeFileSync(path.join(dir, 'page', 'prefs.json'), JSON.stringify({ disabledByGroup: { m1: ['G-cheap', 'G-key'] } }))
+  const m = await models({})
+  assert.equal(m.m1, undefined, '两个分组都停用时应消失')
+  assert.ok(m.img1, '其它模型不受影响')
+  fs.rmSync(path.join(dir, 'page', 'prefs.json'), { force: true })
+  const back = await models({})
+  assert.ok(back.m1, '删掉偏好后恢复')
+})
+
 test('API 方言跟着端点走：纯 anthropic 模型不会被当成 openai 发', async () => {
   const m = await models({})
   assert.equal(m.m1.api.npm, '@ai-sdk/openai-compatible')

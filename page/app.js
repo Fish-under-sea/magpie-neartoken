@@ -155,6 +155,7 @@
         : (typeof raw === 'string' && raw.trim() ? new Set((() => { try { return JSON.parse(raw) } catch { return [] } })()) : new Set())
       await initDisabledByGroup()
       await load()
+      startHotReload()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
         if (visible) load().catch(() => {})
@@ -571,18 +572,32 @@
   let logTo = null
   /** 日期弹层是否展开。 */
   let logCalOpen = false
-  /** 日志每 10 秒自动刷新是否开启。 */
-  let logAuto = false
+  /** 「展开」开的是第二行筛选，不是分布图。 */
+  let logMore = false
+  /** 眼睛按钮：隐藏/显示敏感信息（令牌名与费用）。 */
+  let logPrivate = false
+  let logTokenName = ''
+  let logRequestId = ''
+  let logUpRequestId = ''
+  /** 当前打开的日志菜单：group / kind / interval / cols。 */
+  let logMenu = ''
+  /** 自动刷新间隔（秒），0 表示关闭。 */
+  let logInterval = 10
   let logAutoTimer = null
-  function setLogAuto(on) {
-    logAuto = on
+  /** 日志列是否显示。 */
+  const LOG_COLS = [['token', '令牌'], ['model', '模型'], ['flow', '流'], ['tokenCount', 'Token'], ['bytes', '请求体大小'], ['cost', '费用'], ['time', '耗时'], ['detail', '详情']]
+  let logCols = new Set(LOG_COLS.map(([k]) => k))
+  /** 日志类型（对齐原站下拉）。 */
+  const LOG_KINDS = [['all', '所有类型'], ['topup', '充值'], ['consume', '消耗'], ['manage', '管理', '已弃用'], ['system', '系统'], ['error', '错误'], ['refund', '退款'], ['login', '登录', '已弃用']]
+  function setLogInterval(sec) {
+    logInterval = sec
     if (logAutoTimer) { clearInterval(logAutoTimer); logAutoTimer = null }
-    if (on) {
+    if (sec > 0) {
       logAutoTimer = setInterval(() => {
         if (tab !== 'logs') return
         windows.delete('day'); windows.delete('week'); windows.delete('month')
         load().catch(() => {})
-      }, 10000)
+      }, sec * 1000)
     }
   }
   const marketVendors = new Set()
@@ -1598,6 +1613,60 @@
         el('span', { class: 'lg-range-text', text: fmtDT(range.from) + ' ~ ' + fmtDT(range.to) })),
       calPop)
 
+    // 原站的自定义下拉：触发器 + 浮层，选中项带 ✓，可带「已弃用」徽标
+    // 原站下拉右端是「上箭头 + 下箭头」两个小三角，不是单个 ⌄
+    const keyIcon = () => {
+      const ns = 'http://www.w3.org/2000/svg'
+      const svg = document.createElementNS(ns, 'svg')
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13')
+      svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.9')
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
+      for (const d of ['M14 7a4 4 0 1 0-3.5 3.97L4 17.5V20h3l1-1v-2h2v-2l1.03-1.03A4 4 0 0 0 14 7z', 'M16.5 5.5h.01']) {
+        const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p)
+      }
+      return svg
+    }
+    /** 模型前的厂商 logo：按 vendor_id 找本地品牌图标；找不到就用首字母块。 */
+    const modelIcon = (name) => {
+      const p = pricing()
+      const snap = (p?.models || []).find((x) => x.name === name)
+      const v = snap ? (p?.vendors || []).find((x) => String(x.id) === String(snap.vendor_id)) : null
+      const item = v ? vendorIconModel(v, p) : null
+      if (item && item.src) return el('img', { class: 'lg-mico', src: item.src, alt: '', width: 14, height: 14, loading: 'lazy', onerror: (e) => { e.target.style.display = 'none' } })
+      return el('span', { class: 'lg-mico lg-mico-fb', text: (name || '?').slice(0, 1).toUpperCase() })
+    }
+    const eyeIcon = (off) => {
+      const ns = 'http://www.w3.org/2000/svg'
+      const svg = document.createElementNS(ns, 'svg')
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '16'); svg.setAttribute('height', '16')
+      svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8')
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
+      const paths = off
+        ? ['M3 3l18 18', 'M10.6 10.6a2 2 0 0 0 2.8 2.8', 'M9.9 5.2A9.9 9.9 0 0 1 12 5c5 0 9 4.5 10 7-.4 1-1.4 2.5-2.8 3.8', 'M6.1 6.1C3.9 7.6 2.5 9.7 2 12c1 2.5 5 7 10 7 1.4 0 2.7-.3 3.9-.9']
+        : ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z']
+      for (const d of paths) { const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p) }
+      return svg
+    }
+    const chev = () => el('span', { class: 'lg-chev', 'aria-hidden': 'true' }, el('i'), el('i'))
+    const menu = (id, label, items, value, onPick, opts = {}) => {
+      const open = logMenu === id
+      return el('div', { class: 'lg-menu-wrap' + (opts.grow ? ' grow' : '') },
+        el('button', {
+          class: 'lg-trigger' + (open ? ' open' : ''), 'aria-expanded': String(open),
+          onclick: (e) => { e.stopPropagation(); logMenu = open ? '' : id; render() },
+        }, el('span', { class: 'lg-trigger-text', text: label }), chev()),
+        open ? el('div', { class: 'lg-menu' + (opts.wide ? ' wide' : '') },
+          opts.title ? el('div', { class: 'lg-menu-title', text: opts.title }) : null,
+          el('div', { class: 'lg-menu-list' }, items.map(([val, text, badge]) => el('button', {
+            class: 'lg-menu-item' + (opts.multi ? (opts.isOn && opts.isOn(val) ? ' sel' : '') : (val === value ? ' sel' : '')),
+            onclick: (e) => { e.stopPropagation(); onPick(val); if (!opts.multi) logMenu = ''; render() },
+          }, el('span', { class: 'lg-menu-label', text }),
+            badge ? el('span', { class: 'lg-menu-badge', text: badge }) : null,
+            (opts.multi ? (opts.isOn && opts.isOn(val)) : (val === value)) ? el('span', { class: 'lg-check', text: '✓' }) : null))) ) : null)
+    }
+    const kindLabel = (LOG_KINDS.find(([v]) => v === logKind) || LOG_KINDS[0])[1]
+    const colMenuItems = LOG_COLS.map(([k, label]) => [k, label])
+
     const toolbar = el('div', { class: 'lg-bar' },
       rangeField,
       el('input', {
@@ -1605,28 +1674,33 @@
         oninput: (e) => { logQuery = e.target.value },
         onkeydown: (e) => { if (e.key === 'Enter') render() },
       }),
-      el('select', {
-        class: 'lg-select', onchange: (e) => { logGroup = e.target.value; render() },
-      },
-        el('option', { value: '', text: '分组' }),
-        Object.keys(pricing()?.groups || {}).sort((a, b) => a.localeCompare(b, 'zh'))
-          .map((g) => el('option', { value: g, text: g, selected: logGroup === g }))),
-      el('select', {
-        class: 'lg-select', onchange: (e) => { logKind = e.target.value; render() },
-      },
-        el('option', { value: 'all', text: '所有类型' }),
-        MARKET_KINDS.slice(1).map(([k, label]) => el('option', { value: k, text: label, selected: logKind === k }))),
-      el('button', { class: 'lg-btn', title: '展开或收起分布', onclick: () => { logExpanded = !logExpanded; render() } },
-        logExpanded ? '收起 ▴' : '展开 ▾'))
+      menu('group', logGroup || '分组', [['', '全部分组']].concat(Object.keys(pricing()?.groups || {}).sort((a, b) => a.localeCompare(b, 'zh')).map((g) => [g, g])), logGroup, (v) => { logGroup = v }),
+      menu('kind', kindLabel, LOG_KINDS.map(([v, t, b]) => [v, t, b]), logKind, (v) => { logKind = v }),
+      el('button', {
+        class: 'lg-btn outline lg-expand' + (logMore ? ' open' : ''), title: '展开或收起更多筛选',
+        'aria-expanded': String(logMore), onclick: () => { logMore = !logMore; render() },
+      }, el('span', { text: logMore ? '收起' : '展开' }), el('span', { class: 'lg-chev single', 'aria-hidden': 'true' }, el('i'))))
 
     // 宿主若给出逐条流水（data.rows），按上游 9 列完整渲染；否则退回按模型汇总。
     const detailRows = Array.isArray(data?.rows) ? data.rows : null
+    const colIdx = { token: 2, model: 3, flow: 4, tokenCount: 5, bytes: 6, cost: 7, time: 8, detail: 9 }
+    const hiddenClass = Object.entries(colIdx).filter(([k]) => !logCols.has(k)).map(([, n]) => 'hide-c' + n).join(' ')
+    const fmtNum = (n) => {
+      const v = Number(n)
+      if (!Number.isFinite(v)) return '—'
+      return v.toLocaleString('en-US')
+    }
     const fmtBytes = (n) => {
       const v = Number(n) || 0
       if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB'
       if (v >= 1024) return (v / 1024).toFixed(1) + ' KB'
       return Math.round(v) + ' B'
     }
+    const moreRow = logMore ? el('div', { class: 'lg-bar lg-bar-more' },
+      el('input', { class: 'lg-input', type: 'search', placeholder: '令牌名称', value: logTokenName, oninput: (e) => { logTokenName = e.target.value } }),
+      el('input', { class: 'lg-input', type: 'search', placeholder: '请求 ID', value: logRequestId, oninput: (e) => { logRequestId = e.target.value } }),
+      el('input', { class: 'lg-input', type: 'search', placeholder: '上游请求 ID', value: logUpRequestId, oninput: (e) => { logUpRequestId = e.target.value } })) : null
+
     const all = (data?.models || []).slice().sort((a, b) => b.tokens - a.tokens)
     const total = all.reduce((sum, m) => sum + m.tokens, 0) || 1
     const q = logQuery.trim().toLowerCase()
@@ -1646,26 +1720,49 @@
         el('span', { class: 'lg-chip' }, el('i', { class: 'lg-dot red' }), 'RPM ', el('b', { text: '0' })),
         el('span', { class: 'lg-chip' }, el('i', { class: 'lg-dot blue' }), 'TPM ', el('b', { text: compact(data?.tokens || 0) }))),
       el('div', { class: 'lg-actions' },
+        el('div', { class: 'lg-menu-wrap' },
+          el('button', {
+            class: 'lg-btn bordered' + (logInterval > 0 ? ' on' : ''), title: '自动刷新间隔',
+            'aria-expanded': String(logMenu === 'interval'),
+            onclick: (e) => { e.stopPropagation(); logMenu = logMenu === 'interval' ? '' : 'interval'; render() },
+          }, el('span', { class: 'spin', text: '⟳' }), el('span', { text: ' ' + (logInterval > 0 ? logInterval + 's' : '关闭') }), chev()),
+          logMenu === 'interval' ? el('div', { class: 'lg-menu small' },
+            el('div', { class: 'lg-menu-title', text: '自动刷新已' + (logInterval > 0 ? '开启' : '关闭') }),
+            el('div', { class: 'lg-menu-list' }, [[0, '关闭'], [5, '5s'], [10, '10s'], [30, '30s'], [60, '60s']].map(([val, text]) => el('button', {
+              class: 'lg-menu-item' + (val === logInterval ? ' sel' : ''),
+              onclick: (e) => { e.stopPropagation(); setLogInterval(val); logMenu = ''; render() },
+            }, el('span', { class: 'lg-menu-label', text }), val === logInterval ? el('span', { class: 'lg-check', text: '✓' }) : null))) ) : null),
         el('button', {
-          class: 'lg-btn' + (logAuto ? ' on' : ''),
-          title: logAuto ? '已开启每 10 秒自动刷新，点一下暂停' : '开启每 10 秒自动刷新',
-          'aria-pressed': String(logAuto),
-          onclick: () => { setLogAuto(!logAuto); render() },
-        }, el('span', { class: 'spin', text: '⟳' }), el('span', { text: logAuto ? ' 10s · 开' : ' 10s' })),
+          class: 'lg-btn icon-btn' + (logPrivate ? ' on' : ''),
+          title: logPrivate ? '显示敏感信息' : '隐藏敏感信息',
+          'aria-pressed': String(logPrivate),
+          onclick: () => { logPrivate = !logPrivate; render() },
+        }, eyeIcon(logPrivate)),
         el('button', {
-          class: 'lg-btn icon', title: '立即刷新',
+          class: 'lg-btn primary',
           onclick: (e) => {
             const btn = e.currentTarget
-            btn.classList.add('refreshing')
+            btn.classList.add('searching')
             windows.delete('day'); windows.delete('week'); windows.delete('month')
-            load().catch(() => {}).finally(() => setTimeout(() => btn.classList.remove('refreshing'), 700))
+            load().catch(() => {}).finally(() => setTimeout(() => btn.classList.remove('searching'), 500))
           },
-        }, el('span', { class: 'spin', text: '↻' })),
-        el('button', { class: 'lg-btn icon', title: '显示或隐藏明细', onclick: () => { logExpanded = !logExpanded; render() } }, '👁'),
-        el('button', { class: 'lg-btn', onclick: () => { logQuery = ''; logGroup = ''; logKind = 'all'; logFrom = null; logTo = null; windows.clear(); load().catch(() => {}); render() } }, '重置'),
-        el('button', { class: 'lg-btn primary', onclick: () => render() }, '搜索'),
-        el('button', { class: 'lg-btn', onclick: () => showError('站点没有导出端点，导出需要宿主支持。') }, '导出'),
-        el('button', { class: 'lg-btn', onclick: () => { logExpanded = true; render() } }, '查看')))
+        }, '搜索'),
+        el('button', { class: 'lg-btn outline', onclick: () => { logQuery = ''; logGroup = ''; logKind = 'all'; logFrom = null; logTo = null; windows.clear(); load().catch(() => {}); render() } }, '重置'),
+        el('div', { class: 'lg-menu-wrap right' },
+          el('button', {
+            class: 'lg-btn outline', 'aria-expanded': String(logMenu === 'cols'),
+            onclick: (e) => { e.stopPropagation(); logMenu = logMenu === 'cols' ? '' : 'cols'; render() },
+          }, el('span', { text: '查看' }), chev()),
+          logMenu === 'cols' ? el('div', { class: 'lg-menu' },
+            el('div', { class: 'lg-menu-title', text: '切换列' }),
+            el('div', { class: 'lg-menu-list' }, colMenuItems.map(([val, text]) => el('button', {
+              class: 'lg-menu-item sel',
+              onclick: (e) => {
+                e.stopPropagation()
+                if (logCols.has(val)) logCols.delete(val); else logCols.add(val)
+                render()
+              },
+            }, el('span', { class: 'lg-menu-label', text }), el('span', { class: 'lg-check', text: logCols.has(val) ? '✓' : '' })))) ) : null)))
 
     if (!data) {
       return el('section', { class: 'logs' },
@@ -1685,42 +1782,58 @@
           el('span', { text: String(r.time || '') }),
           el('span', { class: 'lg-tag ok', text: r.kind || '消耗' })),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-pill', text: '🔗 ' + (r.tokenName || '—') }),
+          el('span', { class: 'lg-pill' }, keyIcon(), el('span', { text: logPrivate ? '••••' : (r.tokenName || '—') })),
           r.group ? el('span', { class: 'lg-group' }, groupBadge(r.group)) : null),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-model', text: r.model || '—' }),
+          el('span', { class: 'lg-model' }, modelIcon(r.model), el('span', { text: r.model || '—' })),
           r.effort ? el('span', { class: 'lg-effort', text: r.effort }) : null),
         el('span', { class: 'lg-cell-stack' },
           el('span', { text: '流' }),
           el('span', { class: 'lg-sub', text: (r.tps ? r.tps + ' t/s' : '—') })),
-        el('span', { class: 'num', text: (r.input != null ? compact(r.input) : '—') + ' / ' + (r.output != null ? compact(r.output) : '—') }),
+        el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
         el('span', { class: 'num', text: r.bytes != null ? fmtBytes(r.bytes) : '—' }),
-        el('span', { class: 'num', text: r.cost || '—' }),
+        el('span', { class: 'num', text: logPrivate ? '••••' : (r.cost || '—') }),
         el('span', { class: 'lg-cell-stack lg-time' },
           el('span', null, '首字 ', el('b', { text: r.ttft || '—' })),
           el('span', null, '耗时 ', el('b', { text: r.dur || '—' }))),
         el('span', { class: 'lg-detail', text: r.detail || '—' })))
       return el('section', { class: 'logs' },
         el('h2', { class: 'logs-title', text: '通用日志' }),
-        toolbar, statbar, logExpanded ? dist : null,
-        el('div', { class: 'lg-table-wrap' }, el('div', { class: 'lg-table' },
+        toolbar, moreRow, statbar,
+        el('div', { class: 'lg-table-wrap' }, el('div', { class: 'lg-table ' + hiddenClass },
           el('div', { class: 'lg-row head' }, colsD.map((c) => el('span', { text: c }))), body)),
         el('p', { class: 'note', text: '数据来自站点逐条日志。' }))
     }
 
     const cols = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
-    const table = el('div', { class: 'lg-table' },
+    const table = el('div', { class: 'lg-table ' + hiddenClass },
       el('div', { class: 'lg-row head' }, cols.map((c) => el('span', { text: c }))),
-      rows.length ? rows.map((m) => el('div', { class: 'lg-row' },
-        el('span', { text: fmtDT(range.to).slice(0, 10) }),
-        el('span', { text: view.tokenName || '—' }),
-        el('span', { class: 'who', title: m.model, text: m.model }),
-        el('span', { text: '—' }),
-        el('span', { class: 'num', text: compact(m.tokens) }),
-        el('span', { text: '—' }),
-        el('span', { class: 'num', text: m.costText || '—' }),
-        el('span', { text: '—' }),
-        el('span', { class: 'num', text: Math.round((m.tokens / total) * 100) + '%' })))
+      rows.length ? rows.map((m) => {
+        const snap = (pricing()?.models || []).find((x) => x.name === m.model)
+        const group = snap ? cheapestGroup(snap) : ''
+        const effort = snap && marketKindOf(snap) === 'chat' ? 'High' : ''
+        return el('div', { class: 'lg-row' },
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'lg-strong', text: fmtDT(range.to).slice(0, 16) }),
+          el('span', { class: 'lg-tag ok', text: '消耗' })),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'lg-pill' }, keyIcon(), el('span', { text: logPrivate ? '••••' : (view.tokenName || '—') })),
+          group ? el('span', { class: 'lg-gb' }, groupBadge(group)) : null),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'lg-pill lg-model-pill', title: m.model }, modelIcon(m.model), el('span', { text: m.model })),
+          effort ? el('span', { class: 'lg-effort', text: effort }) : null),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { text: '流' }),
+          el('span', { class: 'lg-sub', text: '—' })),
+        el('span', { class: 'lg-strong num', text: fmtNum(m.tokens) }),
+        el('span', { class: 'lg-strong num', text: '—' }),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (m.costText || '—') })),
+        el('span', { class: 'lg-cell-stack lg-time' },
+          el('span', { class: 'lg-bar-green' }, '首字 ', el('b', { text: '—' })),
+          el('span', { class: 'lg-bar-green' }, '耗时 ', el('b', { text: '—' }))),
+        el('span', { class: 'lg-detail', text: '—' }))
+      })
         : el('div', { class: 'lg-empty', text: '这个筛选下没有记录。' }))
 
     const dist = logExpanded ? el('div', { class: 'lg-dist' },
@@ -1732,7 +1845,7 @@
 
     return el('section', { class: 'logs' },
       el('h2', { class: 'logs-title', text: '通用日志' }),
-      toolbar, statbar, dist,
+      toolbar, moreRow, statbar,
       el('div', { class: 'lg-table-wrap' }, table),
       el('p', { class: 'note', text: '数字来自站点用量端点，按模型汇总；站点未提供逐条流水，故「流 / 请求体大小 / 耗时」留空。' }))
   }
@@ -1938,47 +2051,40 @@
     })
   }
 
-  let checking = false
-  async function checkUpdate() {
-    if (checking) return
-    checking = true
-    const btn = $('updates')
-    const note = $('update-note')
-    const was = btn.textContent
-    btn.disabled = true
-    btn.textContent = '检查中…'
-    note.hidden = true
+  /**
+   * 自动热重载：定时读 page/latest.js 比对版本，发现比当前新就把本页带破缓存参数重载。
+   * 这样插件不需要「检查更新」按钮，装上新版本后页面会自己换过去。
+   */
+  let hotTimer = null
+  async function autoHotReload() {
     const latest = await loadLatest()
     const mine = self.NEARTOKEN_VERSION || ''
-    checking = false
-    btn.disabled = false
-    btn.textContent = was
-    if (!latest) {
-      note.className = 'update-note warn'
-      note.textContent = '没查到最新版本：插件还没联网拉过一次，稍后再试。'
+    if (!latest || !mine || cmpVersion(latest, mine) <= 0) return
+    const key = 'nt-reloaded-' + latest
+    try {
+      if (sessionStorage.getItem(key)) return
+      sessionStorage.setItem(key, '1')
+    } catch { /* 没有 storage 也允许重载一次 */ }
+    const note = document.getElementById('update-note')
+    if (note) {
       note.hidden = false
-      return
-    }
-    if (mine && cmpVersion(latest, mine) > 0) {
       note.className = 'update-note new'
-      note.textContent = '有新版本 v' + latest + '（当前 v' + mine + '）'
-      const link = el('a', {
-        class: 'link',
-        href: 'https://github.com/Fish-under-sea/magpie-neartoken/releases',
-        target: '_blank',
-        rel: 'noreferrer',
-        style: 'margin-left:8px',
-      }, '去下载 ↗')
-      note.append(link)
-      note.hidden = false
-      return
+      note.textContent = '插件已更新到 v' + latest + '，正在重载…'
     }
-    note.className = 'update-note'
-    note.textContent = '已是最新 v' + (mine || latest)
-    note.hidden = false
+    setTimeout(() => {
+      try {
+        const u = new URL(location.href)
+        u.searchParams.set('v', latest)
+        location.replace(u.toString())
+      } catch { location.reload() }
+    }, 900)
+  }
+  function startHotReload() {
+    if (hotTimer) return
+    setTimeout(() => { autoHotReload().catch(() => {}) }, 2500)
+    hotTimer = setInterval(() => { autoHotReload().catch(() => {}) }, 60_000)
   }
 
-  $('updates').addEventListener('click', checkUpdate)
 
   // ---------- 画图 ----------
 
