@@ -43,6 +43,14 @@ test('模型在原生列表里只显示模型名', async () => {
   assert.equal(m.img1.name, 'img1')
 })
 
+test('对话模型声明 reasoning 与思考档位，图片模型不声明', async () => {
+  const m = await models({})
+  assert.equal(m.m1.capabilities.reasoning, true)
+  assert.deepEqual(Object.keys(m.m1.variants), ['low', 'medium', 'high'])
+  assert.equal(m.img1.capabilities.reasoning, undefined)
+  assert.equal(m.img1.variants, undefined)
+})
+
 test('未指定分组级状态时，模型走最便宜的组', async () => {
   assert.equal((await models({})).m1.headers['x-neartoken-group'], '#1')
 })

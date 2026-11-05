@@ -216,20 +216,69 @@ function readBundledPricing() {
  * 插件在场时宿主完全依赖 provider.models() 给模型表，一次网络抖动不该让
  * 整张模型表消失（表现为供应商从列表掉下、要重新连接）。
  */
-async function loadPricingEnv() {
+/**
+ * 目录环境缓存。宿主在页面改 options 后会立刻重新列举供应商模型，
+ * 那一次列举必须快：这里先给缓存或包内快照，实时目录在后台刷新。
+ * 之前每次列举都直接打 /api/pricing（外加 npm 版本探测），网络一慢就被宿主判成
+ * 「供应商没模型」，表现出来就是改一个模型供应商就掉。
+ */
+let envCache = null
+let envCacheAt = 0
+let envBusy = false
+const ENV_TTL = 90_000
+
+async function fetchLiveEnv() {
   try {
     const [env, status] = await Promise.all([
       call('/api/pricing'),
       call('/api/status').catch(() => null),
     ])
-    if (Array.isArray(env?.data) && env.data.length) {
-      return { env, status, bundled: false }
-    }
+    if (Array.isArray(env?.data) && env.data.length) return { env, status, bundled: false }
   } catch { /* 落到包内快照 */ }
   const snap = readBundledPricing()
-  return snap
-    ? { env: snap, status: null, bundled: true }
-    : { env: { data: [] }, status: null, bundled: true }
+  return snap ? { env: snap, status: null, bundled: true } : { env: { data: [] }, status: null, bundled: true }
+}
+
+function refreshEnvInBackground() {
+  if (envBusy) return
+  envBusy = true
+  fetchLiveEnv()
+    .then((next) => {
+      if (Array.isArray(next?.env?.data) && next.env.data.length) {
+        envCache = next
+        envCacheAt = Date.now()
+      }
+    })
+    .catch(() => { /* 后台失败保持旧缓存 */ })
+    .finally(() => { envBusy = false })
+}
+
+async function loadPricingEnv() {
+  const fresh = envCache && Date.now() - envCacheAt < ENV_TTL
+  if (envCache && fresh) return envCache
+  if (envCache) {
+    // 有旧缓存：先用它并后台刷新，这次列举绝不等网络
+    refreshEnvInBackground()
+    return envCache
+  }
+  // 冷启动：给网络一个很短的上限，拿不到就先用包内快照，后台继续刷
+  const bundled = () => {
+    const snap = readBundledPricing()
+    return snap ? { env: snap, status: null, bundled: true } : { env: { data: [] }, status: null, bundled: true }
+  }
+  const first = await Promise.race([
+    fetchLiveEnv(),
+    new Promise((resolve) => setTimeout(() => resolve(null), 2_500)),
+  ])
+  if (first && Array.isArray(first.env?.data) && first.env.data.length) {
+    envCache = first
+    envCacheAt = Date.now()
+    return first
+  }
+  envCache = bundled()
+  envCacheAt = Date.now()
+  refreshEnvInBackground()
+  return envCache
 }
 
 async function catalog(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map(), disabledByGroup = new Map()) {
@@ -294,7 +343,11 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
       capabilities: {
         toolcall: true,
         output: kindOutput(kind),
+        // 对话模型声明 reasoning，配合下面的 variants，宿主才给「思考强度」档位
+        ...(kind === 'chat' ? { reasoning: true } : {}),
       },
+      // variants 的键就是 reasoning 档位；缺了它宿主只会显示「—」
+      ...(kind === 'chat' ? { variants: { low: {}, medium: {}, high: {} } } : {}),
     }
   }
   if (!bundled) writeGroups([...groupsOut.values()].map((g) => ({
@@ -630,7 +683,8 @@ export default async function neartoken(input, options) {
        * @returns {Promise<Record<string, object>>}
        */
       async models() {
-        await stampLatest()
+        // 版本探测放到后台：它要访问 npm registry，绝不能挡住宿主列举模型
+        void stampLatest()
         return catalog(disabledGroups, disabledModels, enabledByGroup, disabledByGroup)
       },
     },
