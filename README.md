@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.6.8**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**0.6.9**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.8.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.9.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,14 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 0.6.9 模型广场改版与供应商掉出修复
+
+**这次掉出的真正原因找到了**：旧版本写入的 `options.disabledModels` 还留在宿主里（可能有一百多个模型名），provider 一直按它过滤，所以模型列表只剩那几个、「全选」也救不回来——因为全选只清新的分组表。本版启动时作废该字段，写回时把它清成空数组。
+
+- 模型广场改版：筛选分节可折叠（分组 / 类型 / 供应商 / 定价类型 / 端点类型，展开状态会记住，收起带方向箭头与命中计数）；卡片换成上游定价页的层次——品牌图标头像、两行描述、按量/动态/按次徽标、带分隔线的价格行、端点小胶囊、状态条与详情入口。
+- provider 取数改为「先给结果、后台刷新」：目录环境加 90 秒内存缓存，冷启动最多等 2.5 秒就退回包内快照；npm 版本探测不再阻塞模型列举。这样在模型广场里改一个开关，宿主重新列举时不会因为等网络而把供应商判成没模型。
+- 对话模型补 `capabilities.reasoning` 与 `variants: {low, medium, high}`，宿主才会给出「思考强度」档位；图片 / 视频 / 语音 / 向量模型不声明该能力。
 
 ## 0.6.8 分组级启停修正与模型名裸显示
 
