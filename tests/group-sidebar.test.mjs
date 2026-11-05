@@ -5,7 +5,7 @@ import vm from 'node:vm'
 
 const source = fs.readFileSync(new URL('../page/app.js', import.meta.url), 'utf8')
 const names = new Set(['groupEnableStats', 'groupNote', 'groupChipModel', 'bandActiveCount', 'groupTags', 'cheapestGroup', 'isOn', 'viewGroup', 'initDisabledByGroup', 'groupOptionsPayload'])
-const fns = [...source.matchAll(/  function (\w+)\([^\n]*\) \{[\s\S]*?\n  \}/g)]
+const fns = [...source.matchAll(/  (?:async )?function (\w+)\([^\n]*\) \{[\s\S]*?\n  \}/g)]
   .filter((m) => names.has(m[1])).map((m) => m[0]).join('\n')
 const consts = [
   ...source.match(/^  const (PRICE_TAGS|LEAD_ORDER) = .*$/gm),
@@ -28,6 +28,8 @@ function make(entries = [], group = '', options = {}) {
     Map, Set, JSON, String, Number, Object, Array,
     KIND_SERIES: { chat: '对话' }, groupKind: () => 'chat',
     marketGroup: group, pricing: () => p, options,
+    bridge: { call: async () => { throw new Error('no prefs') } },
+    localStorage: { getItem: () => null, setItem: () => {} },
   })
   vm.runInContext(consts + '\n' + fns + '\n;globalThis.__dbg = disabledByGroup;', ctx)
   ctx.__dbg.clear()
@@ -76,15 +78,15 @@ test('isOn 跟着当前选定分组切换判定', () => {
   assert.equal(make([['b', ['G1']]], 'G2').isOn(p.models[1]), true)
 })
 
-test('读回停用表：形状不对就当没有记录，不会把模型判成停用', () => {
+test('读回停用表：形状不对就当没有记录，不会把模型判成停用', async () => {
   for (const bad of [{ disabledByGroup: { a: 'G1' } }, { disabledByGroup: [] }, { disabledByGroup: 'bad' }, { disabledByGroup: null }]) {
     const ctx = make([], '', bad)
-    ctx.initDisabledByGroup()
+    await ctx.initDisabledByGroup()
     assert.equal(ctx.__dbg.size, 0, JSON.stringify(bad))
     assert.equal(ctx.isOn(p.models[0]), true)
   }
   const ok = make([], '', { disabledByGroup: { a: ['G1'] } })
-  ok.initDisabledByGroup()
+  await ok.initDisabledByGroup()
   assert.equal(ok.isOn(p.models[0]), false)
 })
 

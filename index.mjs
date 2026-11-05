@@ -283,6 +283,15 @@ function npmOf(row) {
   return '@ai-sdk/openai-compatible'
 }
 
+/** 读页面写下的偏好文件（page/prefs.json）；不存在或坏掉就当作没有偏好。 */
+function readPrefs() {
+  try {
+    const raw = readFileSync(join(here, 'page', 'prefs.json'), 'utf8')
+    const j = JSON.parse(raw)
+    return j && typeof j === 'object' ? j : {}
+  } catch { return {} }
+}
+
 /** 模型 → 分组 ref。请求不在 catalog 里，靠这张表补 x-neartoken-group。 */
 const groupRefOf = new Map()
 
@@ -290,6 +299,18 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
   const groupsOut = new Map()
   const { env, status, bundled } = await loadPricingEnv()
   const rows = Array.isArray(env?.data) ? env.data : []
+  // 页面偏好：模型 → 被停用的分组。放在请求外读一次，不阻塞也不触怒宿主。
+  const prefs = readPrefs()
+  const prefsDisabled = (() => {
+    const out = new Map()
+    const raw = prefs?.disabledByGroup
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      for (const [name, list] of Object.entries(raw)) {
+        if (Array.isArray(list) && list.length) out.set(String(name), new Set(list.map(String)))
+      }
+    }
+    return out
+  })()
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
   const ratios = env?.group_ratio && typeof env.group_ratio === 'object' ? env.group_ratio : {}
   const vendors = Array.isArray(env?.vendors) ? env.vendors : []
@@ -317,8 +338,10 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
     }
     const groups = all.filter((g) => {
       const name = String(g ?? '').trim()
-      // 只保留显式配置的分组级禁用；页面侧的启停不再参与过滤
-      return !!name && !disabledGroups.has(name)
+      if (!name || disabledGroups.has(name)) return false
+      // 页面偏好（文件）里被停用的分组才排除；文件不存在时不过滤
+      if (prefsDisabled.has(model) && prefsDisabled.get(model).has(name)) return false
+      return true
     })
     if (!groups.length) continue
     // 一个模型只出一行：多分组不再展开成多行，否则「只启用一个模型」在

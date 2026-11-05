@@ -496,3 +496,26 @@
 .lg-time b { font-family: var(--nt-code); color: var(--nt-ink); font-weight: 600; }
 .lg-time span { font-size: 10px; color: var(--nt-muted); margin-right: 6px; }
 .lg-detail { font-size: 10px; color: var(--nt-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 日志按钮/弹层的过渡，和上游一致：轻、快、只动 transform/opacity/颜色 */
+.lg-btn, .lg-cal-presets button, .lg-range-btn, .lg-select, .lg-input, .lg-chip {
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .12s ease;
+}
+.lg-btn:hover, .lg-cal-presets button:hover { background: rgba(255,255,255,.05); }
+.lg-btn:active, .lg-cal-presets button:active { transform: scale(.97); }
+.lg-btn.primary:hover { filter: brightness(1.06); }
+.lg-btn:focus-visible, .lg-cal-presets button:focus-visible, .lg-range-btn:focus-visible {
+  outline: 2px solid var(--nt-accent); outline-offset: 2px;
+}
+.lg-cal { animation: lgCalIn .16s ease both; transform-origin: top left; }
+@keyframes lgCalIn { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+.lg-range-btn.open { background: rgba(255,255,255,.04); }
+.lg-btn .spin { display: inline-block; }
+.lg-btn.refreshing .spin { animation: lgSpin .9s linear infinite; }
+@keyframes lgSpin { to { transform: rotate(360deg); } }
+.lg-select { appearance: none; padding-right: 26px; background-image: linear-gradient(45deg, transparent 50%, var(--nt-faint) 50%), linear-gradient(135deg, var(--nt-faint) 50%, transparent 50%); background-position: calc(100% - 13px) 13px, calc(100% - 8px) 13px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+@media (prefers-reduced-motion: reduce) {
+  .lg-cal { animation: none; }
+  .lg-btn, .lg-cal-presets button, .lg-range-btn, .lg-select, .lg-input, .lg-chip { transition: none; }
+  .lg-btn.refreshing .spin { animation: none; }
+}

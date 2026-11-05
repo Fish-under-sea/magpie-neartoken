@@ -113,6 +113,15 @@
     render()
   }
 
+  // 点击弹层以外的地方收起日期面板（触发一次重绘）
+  document.addEventListener('click', (e) => {
+    if (!logCalOpen) return
+    const t = e.target
+    if (t && t.closest && (t.closest('.lg-cal') || t.closest('.lg-range-btn'))) return
+    logCalOpen = false
+    if (tab === 'logs') render()
+  })
+
   // ---------- 主流程 ----------
 
   async function boot() {
@@ -144,7 +153,7 @@
       const raw = options.disabledModels
       disabledModels = Array.isArray(raw) ? new Set(raw)
         : (typeof raw === 'string' && raw.trim() ? new Set((() => { try { return JSON.parse(raw) } catch { return [] } })()) : new Set())
-      initDisabledByGroup()
+      await initDisabledByGroup()
       await load()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
@@ -1222,12 +1231,21 @@
 
   /** 读回分组级停用表。只认「模型名 → 分组数组」的合法形状，其余当没有记录。 */
   const DISABLED_KEY = 'neartoken:disabledByGroup'
-  function initDisabledByGroup() {
+  /** 宿主有 neartoken:prefs 就用它（写文件、不碰 options、不会让供应商掉）；没有就回本机存储。 */
+  async function initDisabledByGroup() {
     let stored = null
     try {
-      const raw = localStorage.getItem(DISABLED_KEY)
-      if (raw && raw.trim()) stored = JSON.parse(raw)
-    } catch { stored = null }
+      const viaHost = await bridge.call('neartoken:prefs', { get: true })
+      if (viaHost && typeof viaHost === 'object' && viaHost.disabledByGroup && typeof viaHost.disabledByGroup === 'object') {
+        stored = viaHost.disabledByGroup
+      }
+    } catch { /* 宿主还没这个调用 */ }
+    if (!stored) {
+      try {
+        const raw = localStorage.getItem(DISABLED_KEY)
+        if (raw && raw.trim()) stored = JSON.parse(raw)
+      } catch { stored = null }
+    }
     if (!stored) stored = options.disabledByGroup
     if (typeof stored === 'string' && stored.trim()) {
       try { stored = JSON.parse(stored) } catch { stored = null }
@@ -1614,7 +1632,15 @@
         el('span', { class: 'lg-chip' }, el('i', { class: 'lg-dot red' }), 'RPM ', el('b', { text: '0' })),
         el('span', { class: 'lg-chip' }, el('i', { class: 'lg-dot blue' }), 'TPM ', el('b', { text: compact(data?.tokens || 0) }))),
       el('div', { class: 'lg-actions' },
-        el('button', { class: 'lg-btn', title: '每 10 秒刷新', onclick: () => { load().catch(() => {}) } }, '⟳ 10s'),
+        el('button', {
+          class: 'lg-btn', title: '刷新用量数据（每 10 秒自动刷新）',
+          onclick: (e) => {
+            const btn = e.currentTarget
+            btn.classList.add('refreshing')
+            windows.clear()
+            load().catch(() => {}).finally(() => setTimeout(() => btn.classList.remove('refreshing'), 700))
+          },
+        }, el('span', { class: 'spin', text: '⟳' }), el('span', { text: ' 10s' })),
         el('button', { class: 'lg-btn icon', title: '显示或隐藏明细', onclick: () => { logExpanded = !logExpanded; render() } }, '👁'),
         el('button', { class: 'lg-btn', onclick: () => { logQuery = ''; logGroup = ''; logKind = 'all'; logFrom = null; logTo = null; windows.clear(); load().catch(() => {}); render() } }, '重置'),
         el('button', { class: 'lg-btn primary', onclick: () => render() }, '搜索'),
@@ -1743,14 +1769,16 @@
   let sending = false
   let sendAgain = false
   async function flushDisabled() {
-    // 只写本机存储：不碰宿主 options，宿主就不会因为改开关去重建插件宿主，
-    // 供应商也就不会掉。代价是停用的模型仍会出现在 magpie 的模型列表里。
+    const plain = Object.fromEntries([...disabledByGroup].map(([k, v]) => [k, [...v]]))
+    // 先走宿主偏好文件调用：写文件不会重建插件宿主，供应商不会因此掉。
     try {
-      localStorage.setItem(DISABLED_KEY, JSON.stringify(Object.fromEntries([...disabledByGroup].map(([k, v]) => [k, [...v]]))))
+      const r = await bridge.call('neartoken:prefs', { set: plain })
+      if (r && r.ok) { lastError = ''; return }
+    } catch { /* 宿主还没这个调用，落到本机存储 */ }
+    try {
+      localStorage.setItem(DISABLED_KEY, JSON.stringify(plain))
       lastError = ''
-    } catch {
-      /* 存不下就只保留本次会话的状态 */
-    }
+    } catch { /* 存不下就只保留本次会话的状态 */ }
   }
   function saveDisabled() {
     if (saveTimer) clearTimeout(saveTimer)
