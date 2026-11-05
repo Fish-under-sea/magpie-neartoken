@@ -9,7 +9,17 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nt-provider-'))
 fs.copyFileSync(new URL('../index.mjs', import.meta.url), path.join(dir, 'index.mjs'))
 fs.mkdirSync(path.join(dir, 'page'), { recursive: true })
 fs.copyFileSync(new URL('../page/icon.png', import.meta.url), path.join(dir, 'page', 'icon.png'))
-fs.writeFileSync(path.join(dir, 'page', 'pricing.js'), 'self.NEARTOKEN_PRICING = {"models":[],"groups":{}}\n')
+const bundledSnapshot = {
+  version: 'test',
+  models: [
+    { name: 'm1', enable_groups: ['G-cheap', 'G-key'], supported_endpoint_types: ['openai'], input_modalities: ['text', 'image'], context_window: 1000000, max_tokens: 64000, quota_type: 0, vendor_id: 1 },
+    { name: 'img1', enable_groups: ['G-img'], supported_endpoint_types: ['image-generation'], input_modalities: ['text'], quota_type: 0, vendor_id: 1 },
+  ],
+  groups: { 'G-cheap': 0.5, 'G-key': 2, 'G-img': 1 },
+  refs: { 'G-cheap': '#1', 'G-key': '#2', 'G-img': '#3' },
+  notes: {}, auto: [], vendors: [], endpoints: {},
+}
+fs.writeFileSync(path.join(dir, 'page', 'pricing.js'), 'self.NEARTOKEN_PRICING = ' + JSON.stringify(bundledSnapshot) + '\n')
 
 const pricingEnv = {
   success: true,

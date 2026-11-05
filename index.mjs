@@ -261,21 +261,11 @@ async function loadPricingEnv() {
     refreshEnvInBackground()
     return envCache
   }
-  // 冷启动：给网络一个很短的上限，拿不到就先用包内快照，后台继续刷
-  const bundled = () => {
-    const snap = readBundledPricing()
-    return snap ? { env: snap, status: null, bundled: true } : { env: { data: [] }, status: null, bundled: true }
-  }
-  const first = await Promise.race([
-    fetchLiveEnv(),
-    new Promise((resolve) => setTimeout(() => resolve(null), 2_500)),
-  ])
-  if (first && Array.isArray(first.env?.data) && first.env.data.length) {
-    envCache = first
-    envCacheAt = Date.now()
-    return first
-  }
-  envCache = bundled()
+  // 冷启动也绝不赌网络：宿主等不起。先给包内快照（毫秒级），实时目录后台补。
+  // 改 options 会让宿主重建插件宿主进程，缓存随之清空——这一等就足以让宿主
+  // 把供应商判成「没有模型」，表现出来就是改一个开关供应商就掉。
+  const snap = readBundledPricing()
+  envCache = snap ? { env: snap, status: null, bundled: true } : { env: { data: [] }, status: null, bundled: true }
   envCacheAt = Date.now()
   refreshEnvInBackground()
   return envCache
