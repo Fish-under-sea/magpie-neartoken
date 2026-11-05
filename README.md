@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.6.11**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**0.6.12**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.11.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.12.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,20 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 0.6.12 分组头必达 · 启停不再碰宿主 options
+
+两个问题分别修：
+
+**一、调用 503「No available channel for model … under group default」**
+
+站点按 `x-neartoken-group` 选渠道；头没到站点就会回落 `default` 组，那边常常没有渠道，于是 503。以前把分组头挂在模型的 `headers` 上，宿主未必透传。现在 `auth.loader.fetch` 自己补：解析请求体里的 `model`，从目录里查到它实际走的分组 ref，直接写进请求头。模型自带的 `headers` 仍保留一份。
+
+**二、改模型启用状态导致供应商掉出**
+
+写 `options` 会让宿主重建插件宿主，这一步本身就可能把供应商判成「没有模型」，之前几版都在跟它赛跑（缓存、快照、超时），仍然会掉。本版直接不再写：页面启停状态改存 `localStorage`，provider 一律返回站点全量模型表，任何残留的 `disabledModels` / `enabledByGroup` / `disabledByGroup` 都不再参与过滤。
+
+代价写清楚：**停用的模型仍会出现在 magpie 的模型列表里**，页面上的启用状态只决定本页的高亮与分组统计。这是用「少一个筛选能力」换「供应商不再掉出」。
 
 ## 0.6.11 改开关不再掉供应商
 
