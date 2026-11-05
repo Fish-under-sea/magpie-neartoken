@@ -1,0 +1,8 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
+const s=fs.readFileSync(new URL('../page/app.js',import.meta.url),'utf8'),names=new Set(['priceOf','taskPrices','priceCondition','timedPriceExpression']);const code=[...s.matchAll(/  function (\w+)\([^\n]*\) \{[\s\S]*?\n  \}/g)].filter(m=>names.has(m[1])).map(m=>m[0]).join('\n');
+function price(model,time='2026-11-05T12:00:00Z'){const c=vm.createContext({pricing:()=>({groups:{},currency:{}}),marketMode:'standard',marketGroup:'',Intl,Date:class extends Date{constructor(...args){super(...(args.length?args:[time]))}}});vm.runInContext(code,c);return c.priceOf(model)}
+const timed={billing_mode:'tiered_expr',billing_expr:'weekday("UTC") >= 1 && weekday("UTC") <= 5 && ((hour("UTC") >= 1 && hour("UTC") < 4) || (hour("UTC") >= 6 && hour("UTC") < 10)) ? tier("peak", p * 2 + cr * 0.04 + c * 8) : tier("off_peak", p * 1 + cr * 0.02 + c * 4)'};
+test('工作日高峰时段选择高峰价格',()=>assert.equal(price(timed,'2026-11-05T02:00:00Z').input,2));
+test('非高峰与周末选低峰价格',()=>{assert.equal(price(timed).input,1);assert.equal(price(timed,'2026-11-08T02:00:00Z').input,1)});
+test('站点停用档位不计入价格区间',()=>{const p=price({billing_mode:'tiered_expr',billing_expr:'u("resolution") == "480P" ? tier("480P", u("seconds") * 0.8) : tier("2K", u("seconds") * 999)',billing_usage_schema:{resolution:{enum:['480P','2K']},seconds:{unit:'second'}},billing_disabled_usage:{resolution:['2K']}});assert.equal(p.entries[0].max,0.8)});
+test('计费表达式优先于旧按次单价字段',()=>{const p=price({quota_type:1,model_price:0.07,billing_mode:'tiered_expr',billing_expr:'tier("standard", p * 2 + c * 120)'});assert.equal(p.input,2);assert.equal(p.output,120);assert.equal(p.perCall,undefined)});

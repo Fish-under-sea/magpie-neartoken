@@ -530,7 +530,7 @@
   let marketKind = 'all'
   let marketUnit = 'M'
   let marketMode = 'standard'
-  let marketSort = 'default'
+  let marketSort = 'latest'
   let marketLayout = 'grid'
   let logQuery = ''
   let logGroup = ''
@@ -729,36 +729,209 @@
       t.rest ? el('span', { class: 'gb-rest', text: t.rest }) : null)
   }
 
-  /**
-   * priceOf 反推站点卡片上的价格：
-   *   计费表达式里 p/c/cr 的系数 × 该模型最低分组倍率（站点按最低档展示）。
-   * 没有表达式（按量计费）时系数 = model_ratio × 2、× completion_ratio、× cache_ratio。
-   * 逐个与站点 SSR 卡片核对过：gpt-6-astra ¥2/¥10/¥0.2、claude-sonnet-5-5
-   * ¥3/¥15/¥0.15、glm-5.3 ¥2/¥7/¥0.5、gpt-6.1-terra ¥0.26/¥1.3/¥0.013。
-   */
-  function priceOf(m) {
-    const expr = String(m?.billing_expr || '')
-    const coef = (v) => { const x = expr.match(new RegExp('\\b' + v + '\\s*\\*\\s*([\\d.]+)')); return x ? Number(x[1]) : null }
-    const ratios = (m?.enable_groups || []).map((g) => Number(pricing()?.groups?.[g])).filter((v) => v > 0)
-    const min = ratios.length ? Math.min(...ratios) : 1
-    // 生图/音乐这类按次计费：表达式里是 fixed(单价) × 张数，不是 token 系数
-    const fixed = expr.match(/fixed\(\s*([\d.]+)\s*\)/)
-    if (fixed) return { perCall: Number(fixed[1]) * min, perLabel: '张', tiered: true }
-    if (Number(m?.quota_type) === 1 && Number(m?.model_price) > 0) {
-      return { perCall: Number(m.model_price), perLabel: '次', tiered: false }
-    }
-    const p0 = coef('p') ?? (Number(m?.model_ratio) || 0) * 2
-    const c0 = coef('c') ?? p0 * (Number(m?.completion_ratio) || 0)
-    const r0 = coef('cr') ?? p0 * (Number(m?.cache_ratio) || 0)
-    return { input: p0 * min, output: c0 * min, cache: r0 * min, tiered: !!expr }
+  /** 计价条件的有限解析器：仅允许数值/字符串比较、布尔运算及公开用量/时间函数。 */
+  function priceCondition(expression, facts = {}, now = new Date()) {
+    try {
+      const tokens = []
+      const pattern = /\s*(\d+(?:\.\d+)?|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_]\w*|\|\||&&|>=|<=|==|!=|[()!,><])/y
+      let at = 0
+      while (at < expression.length) {
+        if (!expression.slice(at).trim()) break
+        pattern.lastIndex = at
+        const match = pattern.exec(expression)
+        if (!match) return undefined
+        tokens.push(match[1]); at = pattern.lastIndex
+      }
+      let cursor = 0
+      const requireToken = (expected) => { if (tokens[cursor++] !== expected) throw new Error('Unsupported pricing condition') }
+      const primary = () => {
+        const token = tokens[cursor++]
+        if (token === '(') { const value = or(); requireToken(')'); return value }
+        if (token === '!') { const value = primary(); return value === undefined ? undefined : !value }
+        if (/^\d/.test(token || '')) return Number(token)
+        if (token?.startsWith('"')) return JSON.parse(token)
+        if (token?.startsWith("'")) return token.slice(1, -1)
+        if (token === 'true' || token === 'false') return token === 'true'
+        if (!['u', 'hour', 'weekday'].includes(token)) throw new Error('Unsupported pricing function')
+        requireToken('('); const argument = primary(); requireToken(')')
+        if (token === 'u') return facts[argument]
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: argument, weekday: 'short', hour: '2-digit', hourCycle: 'h23' }).formatToParts(now)
+        if (token === 'hour') return Number(parts.find((x) => x.type === 'hour')?.value)
+        return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.find((x) => x.type === 'weekday')?.value)
+      }
+      const comparison = () => {
+        const left = primary(), operator = tokens[cursor]
+        if (!['==', '!=', '>=', '<=', '>', '<'].includes(operator)) return left
+        cursor++; const right = primary()
+        if (left === undefined || right === undefined) return undefined
+        if (operator === '==') return left === right
+        if (operator === '!=') return left !== right
+        if (operator === '>=') return left >= right
+        if (operator === '<=') return left <= right
+        return operator === '>' ? left > right : left < right
+      }
+      const and = () => { let value = comparison(); while (tokens[cursor] === '&&') { cursor++; const right = comparison(); value = value === false || value === 0 || right === false || right === 0 ? false : value === undefined || right === undefined ? undefined : !!value && !!right } return value }
+      const or = () => { let value = and(); while (tokens[cursor] === '||') { cursor++; const right = and(); value = value === true || right === true ? true : value === undefined || right === undefined ? undefined : !!value || !!right } return value }
+      const value = or()
+      return cursor === tokens.length ? value : undefined
+    } catch { return undefined }
   }
 
-  /** money 是价格写法：¥2、¥0.02；/1K 时把每 1M 的价除以 1000。 */
-  function money(v, unit) {
-    const x = unit === 'K' ? v / 1000 : v
-    if (!x) return '¥0'
-    const s = String(Math.round(x * 1e8) / 1e8)
-    return '¥' + s
+  /** 时段规则只求当前分支，绝不通过 eval 执行站点表达式。 */
+  function timedPriceExpression(expression, now = new Date()) {
+    const question = expression.indexOf('?')
+    if (question < 0) return undefined
+    let depth = 0, quote = '', nested = 0, colon = -1
+    for (let i = question + 1; i < expression.length; i++) {
+      const ch = expression[i]
+      if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = ''; continue }
+      if (ch === '"' || ch === "'") { quote = ch; continue }
+      if (ch === '(') depth++
+      if (ch === ')') depth--
+      if (depth === 0 && ch === '?') nested++
+      if (depth === 0 && ch === ':') { if (nested) nested--; else { colon = i; break } }
+    }
+    if (colon < 0) return undefined
+    const active = priceCondition(expression.slice(0, question), {}, now)
+    if (active === undefined) return undefined
+    return (active ? expression.slice(question + 1, colon) : expression.slice(colon + 1)).trim()
+  }
+
+  /** 只解析任务单价的线性项；无法确认的表达式交给官网详情，不执行远程代码。 */
+  function taskPrices(m, multiplier) {
+    const schema = m?.billing_usage_schema
+    if (!schema || !Object.keys(schema).length) return null
+    const expr = String(m.billing_expr || '')
+    if (!expr) return Number(m.quota_type) === 1 ? null : { unconfigured: true }
+    const number = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?'
+    const disabled = m.billing_disabled_usage
+    const restrict = disabled && Object.values(disabled).some((values) => Array.isArray(values) && values.length)
+    let scenarios = [{}], previousEnd = 0
+    if (restrict) {
+      for (const [key, spec] of Object.entries(schema)) {
+        if (!Array.isArray(spec.enum)) continue
+        const allowed = spec.enum.filter((value) => !(disabled[key] || []).includes(value))
+        if (scenarios.length * allowed.length > 256) return { unsupported: true, tiered: true }
+        scenarios = scenarios.flatMap((facts) => allowed.map((value) => ({ ...facts, [key]: value })))
+      }
+    }
+    const tiers = []
+    for (const match of expr.matchAll(/\btier\(\s*(["'])([^"']*)\1\s*,/g)) {
+      const start = match.index + match[0].length
+      let depth = 1, quote = '', end = start
+      for (; end < expr.length; end++) {
+        const ch = expr[end]
+        if (quote) { if (ch === '\\') end++; else if (ch === quote) quote = ''; continue }
+        if (ch === '"' || ch === "'") { quote = ch; continue }
+        if (ch === '(') depth++
+        if (ch === ')' && --depth === 0) break
+      }
+      if (depth) return { unsupported: true, tiered: true }
+      if (restrict) {
+        const prefix = expr.slice(previousEnd, match.index).trim().replace(/^:\s*/, '')
+        const question = prefix.lastIndexOf('?')
+        let active
+        if (question >= 0) {
+          const condition = prefix.slice(0, question).trim()
+          const results = scenarios.map((facts) => ({ facts, result: priceCondition(condition, facts) }))
+          if (results.some((item) => item.result === undefined)) return { unsupported: true, tiered: true }
+          active = results.some((item) => !!item.result)
+          scenarios = results.filter((item) => !item.result).map((item) => item.facts)
+        } else { active = scenarios.length > 0; scenarios = [] }
+        previousEnd = end + 1
+        if (!active) continue
+      }
+      const cost = expr.slice(start, end).trim()
+      const terms = cost.split(/\s+\+\s+|(?<=[)\d])\+(?=[a-zA-Z(\d])/g)
+      const units = {}, constants = []
+      for (const term of terms) {
+        const direct = term.match(new RegExp(String.raw`^u\(\s*(["'])([^"']+)\1\s*\)\s*\*\s*(${number})$`))
+        const reverse = term.match(new RegExp(String.raw`^(${number})\s*\*\s*u\(\s*(["'])([^"']+)\2\s*\)$`))
+        if (direct || reverse) {
+          const key = direct ? direct[2] : reverse[3]
+          const value = Number(direct ? direct[3] : reverse[1])
+          if (!Number.isFinite(value) || value < 0 || !schema[key]?.unit) return { unsupported: true, tiered: true }
+          units[key] = (units[key] || 0) + value
+        } else {
+          const constant = term.match(new RegExp('^(?:fixed\\(\\s*)?(' + number + ')(?:\\s*\\))?$'))
+          if (!constant) return { unsupported: true, tiered: true }
+          constants.push(Number(constant[1]))
+        }
+      }
+      tiers.push({ units, constant: constants.reduce((a, b) => a + b, 0) })
+    }
+    if (!tiers.length) return { unsupported: true, tiered: true }
+    const entries = []
+    const localized = (v, fallback) => typeof v === 'string' ? v : (v?.zh || v?.zhCN || v?.en || fallback)
+    const range = (values) => ({ value: Math.min(...values) * multiplier, max: Math.max(...values) * multiplier })
+    for (const [key, spec] of Object.entries(schema)) {
+      const values = tiers.map((t) => t.units[key]).filter(Number.isFinite)
+      if (!values.length) continue
+      const unit = localized(spec.unitLabel, { second: '秒', count: '个', credit: '积分', token: 'Token', request: '次' }[spec.unit] || spec.unit)
+      entries.push({ key, label: localized(spec.description, key), unit, ...range(values) })
+    }
+    for (const [key, label, pure] of [['request', '按次计费', true], ['constant', '附加费用', false]]) {
+      const values = tiers.filter((t) => (Object.keys(t.units).length === 0) === pure && t.constant > 0).map((t) => t.constant)
+      if (values.length) entries.push({ key, label, unit: '次', ...range(values) })
+    }
+    return entries.length ? { entries, tiered: true } : { unsupported: true, tiered: true }
+  }
+
+  /** 官网口径：选组倍率 → 标准/充值系数 → 币种与单位格式化。 */
+  function priceOf(m) {
+    const config = pricing()?.currency || {}
+    const priceRate = Math.max(Number(config.price ?? 1), 0.001)
+    const exchangeRate = Math.max(Number(config.usd_exchange_rate ?? priceRate), 0.001)
+    const modelGroups = m?.enable_groups || []
+    const ratios = modelGroups.map((g) => Number(pricing()?.groups?.[g])).filter(Number.isFinite)
+    const selectedRatio = Number(pricing()?.groups?.[marketGroup])
+    const groupRatio = marketGroup && modelGroups.includes(marketGroup)
+      ? (Number.isFinite(selectedRatio) ? selectedRatio : 1)
+      : (ratios.length ? Math.min(...ratios) : 1)
+    const multiplier = groupRatio * (marketMode === 'topup' ? priceRate / exchangeRate : 1)
+    let expr = m?.billing_mode === 'tiered_expr' ? String(m.billing_expr || '') : ''
+    const currentPeriod = /\b(?:hour|weekday)\s*\(/.test(expr)
+    if (currentPeriod) {
+      expr = timedPriceExpression(expr)
+      if (expr === undefined) return { unsupported: true, tiered: true }
+    }
+    const task = taskPrices({ ...m, billing_expr: expr }, multiplier)
+    if (task) return { ...task, currentPeriod }
+    const coef = (v) => { const x = expr.match(new RegExp('\\b' + v + '\\s*\\*\\s*([\\d.]+(?:[eE][+-]?\\d+)?)')); return x ? Number(x[1]) : undefined }
+    const fixed = expr.match(/fixed\(\s*([\d.]+)\s*\)/)
+    if (fixed) return { perCall: Number(fixed[1]) * multiplier, perLabel: /\bimage_count\b/.test(expr) ? '张' : '次', tiered: true }
+    if (!expr && Number(m?.quota_type) === 1 && typeof m?.model_price === 'number' && Number.isFinite(m.model_price) && m.model_price >= 0) {
+      return { perCall: m.model_price * multiplier, perLabel: '次', tiered: false }
+    }
+    const finite = (v) => typeof v === 'number' && Number.isFinite(v)
+    if (expr && (coef('p') === undefined && coef('c') === undefined || /\b(?:time|hour|minute|weekday|month|day)\s*\(/.test(expr))) return { unsupported: true, tiered: true }
+    const p0 = expr ? coef('p') : (finite(m?.model_ratio) ? m.model_ratio * 2 : undefined)
+    const c0 = expr ? coef('c') : (p0 !== undefined && finite(m?.completion_ratio) ? p0 * m.completion_ratio : undefined)
+    const r0 = expr ? coef('cr') : (p0 !== undefined && finite(m?.cache_ratio) ? p0 * m.cache_ratio : undefined)
+    return { input: p0 === undefined ? undefined : p0 * multiplier, output: c0 === undefined ? undefined : c0 * multiplier, cache: r0 === undefined ? undefined : r0 * multiplier, tiered: !!expr, currentPeriod }
+  }
+
+  /** 与官网一致区分币种、千/百万 Token，以及缺失值和微小非零价格。 */
+  function money(v, unit, perCall = false) {
+    if (v === undefined || v === null || !Number.isFinite(v)) return '—'
+    const config = pricing()?.currency || {}
+    const kind = config.quota_display_type || 'CNY'
+    const rate = kind === 'CNY' ? Number(config.usd_exchange_rate ?? 1) : kind === 'CUSTOM' ? Number(config.custom_currency_exchange_rate ?? 1) : 1
+    let amount = v * (rate > 0 ? rate : 1) / (unit === 'K' ? 1000 : 1)
+    const digits = Math.abs(amount) >= 1 || perCall ? 4 : 6
+    if (amount !== 0 && Math.abs(amount) < 10 ** -digits) amount = Math.sign(amount) * 10 ** -digits
+    const options = { minimumFractionDigits: 0, maximumFractionDigits: digits }
+    if (kind === 'CUSTOM') return (config.custom_currency_symbol?.trim() || '¤') + ' ' + new Intl.NumberFormat('zh-CN', options).format(amount)
+    return new Intl.NumberFormat('zh-CN', { ...options, style: 'currency', currency: kind === 'CNY' ? 'CNY' : 'USD', currencyDisplay: 'narrowSymbol' }).format(amount)
+  }
+
+  /** 官网真实详情路由；保留返回列表所需的分组、单位和计价模式。 */
+  function modelDetailURL(m) {
+    const url = new URL('https://neartoken.cc/pricing/' + encodeURIComponent(m.name))
+    if (marketGroup) url.searchParams.set('group', marketGroup)
+    url.searchParams.set('tokenUnit', marketUnit)
+    if (marketMode === 'topup') url.searchParams.set('rechargePrice', 'true')
+    return affURL(url.toString())
   }
 
   /** modelCard：点击整张卡切换启用；高亮就是启用，只有启用的进 magpie 模型清单。 */
@@ -776,17 +949,24 @@
       }
       return rank(a) - rank(b) || a.localeCompare(b, 'zh')
     })
-    const shownGroups = groups.slice(0, 2)
-    const more = groups.length - shownGroups.length
+    const visibleGroups = marketGroup ? groups.filter((g) => g === marketGroup) : groups
+    const shownGroups = visibleGroups.slice(0, 1)
+    const more = visibleGroups.length - shownGroups.length
     const kind = marketKindOf(m)
     const on = !disabledModels.has(m.name)
-    const priceRow = p.perCall !== undefined
-      ? el('div', { class: 'mc-prices one' },
-        el('div', null, el('span', { text: '按次计费' }), el('b', { text: money(p.perCall, 'M') + ' / ' + p.perLabel })))
-      : el('div', { class: 'mc-prices' },
-        el('div', null, el('span', { text: '输入' }), el('b', { text: money(p.input, marketUnit) + ' / 1' + marketUnit })),
-        el('div', null, el('span', { text: '输出' }), el('b', { text: money(p.output, marketUnit) + ' / 1' + marketUnit })),
-        el('div', null, el('span', { text: '缓存读取' }), el('b', { text: money(p.cache, marketUnit) + ' / 1' + marketUnit })))
+    const priceRow = p.unconfigured || p.unsupported
+      ? el('p', { class: 'note', text: p.unconfigured ? '按用量计费 · 价格未配置' : '动态计费 · 请查看官网详情中的完整规则' })
+      : p.entries
+        ? el('div', { class: 'mc-prices one' }, p.entries.map((entry) =>
+          el('div', null, el('span', { text: entry.label }), el('b', { text: money(entry.value, 'M') + (entry.max !== entry.value ? ' – ' + money(entry.max, 'M') : '') + ' / ' + entry.unit }))))
+        : p.perCall !== undefined
+          ? el('div', { class: 'mc-prices one' },
+            el('div', null, el('span', { text: '按次计费' }), el('b', { text: money(p.perCall, 'M', !p.tiered) + ' / ' + p.perLabel })))
+          : el('div', { class: 'mc-prices' },
+            el('div', null, el('span', { text: '输入' }), el('b', { text: money(p.input, marketUnit) + ' / 1' + marketUnit })),
+            el('div', null, el('span', { text: '输出' }), el('b', { text: money(p.output, marketUnit) + ' / 1' + marketUnit })),
+            p.cache !== undefined && (!p.tiered || p.cache === 0 || p.cache !== p.input)
+              ? el('div', null, el('span', { text: '缓存读取' }), el('b', { text: money(p.cache, marketUnit) + ' / 1' + marketUnit })) : null)
     const hasStatus = m.status !== undefined && m.status !== null
     const bars = el('span', { class: 'mc-bar' }, Array.from({ length: 10 }, (_, i) =>
       el('i', { class: hasStatus ? (i < Math.round((Number(m.status) || 0) / 10) ? 'ok' : 'bad') : '' })))
@@ -807,8 +987,9 @@
           onclick: (e) => { e.stopPropagation(); copy(m.name) },
         }, '⧉')),
       el('p', { class: 'mc-desc', text: m.description || '暂无描述。' }),
-      el('div', { class: 'mc-billing ' + (p.tiered ? 'dyn' : 'flat'), text: p.tiered ? '动态计费' : '按量计费' }),
+      el('div', { class: 'mc-billing ' + (p.tiered ? 'dyn' : 'flat'), text: p.unconfigured ? '按用量计费' : p.tiered ? '动态计费' : p.perCall !== undefined ? '按次计费' : '按量计费' }),
       priceRow,
+      p.currentPeriod ? el('p', { class: 'note', text: '当前时段价格' }) : null,
       el('div', { class: 'mc-line' },
         el('span', { class: 'k', text: '分组' }),
         shownGroups.map((g) => groupBadge(g)),
@@ -825,26 +1006,24 @@
         el('span', null, el('span', { class: 'k', text: '吞吐' }),
           el('span', { class: 'v', text: m.throughput || '—t/s' }))),
       el('div', { class: 'mc-foot' },
-        el('a', { class: 'link', href: affURL('https://neartoken.cc/pricing'), target: '_blank', rel: 'noreferrer' }, '详情 ›')))
+        el('a', { class: 'link', href: modelDetailURL(m), target: '_blank', rel: 'noreferrer', onclick: (e) => e.stopPropagation() }, '详情 ›')))
   }
 
-  /**
-   * versionKey 把模型名里的版本号抽成可比较的数字串（gpt-6.1 > gpt-6 > gpt-5.6，
-   * claude-opus-4-8 > 4-7）。站点 /api/pricing 没有 created_at，
-   * 这版按版本号降序作为「最新版本」的可实时计算口径，不依赖写死名单。
-   */
+  /** 官网最新版本口径：系列内代际落后量 → 主版本 → 档位 → 次版本。 */
   function versionKey(name) {
-    const s = String(name || '').toLowerCase()
-    const nums = (s.match(/\d+(?:\.\d+)?/g) || []).map(Number)
-    return nums.length ? nums : [-1]
+    const text = String(name || '').trim().toLowerCase()
+    const match = text.match(/(\d+)(?:[.-](\d{1,2}))?/)
+    if (!match) return null
+    const parts = text.split(/[-_.\s]+/)
+    const grades = { mythos: 10, fable: 9, opus: 8, sonnet: 7, haiku: 6, astra: 10, sol: 9, terra: 8, luna: 7, pro: 6, flash: 5 }
+    return { major: Number(match[1]), minor: Number(match[2] || 0), family: parts[0].replace(/\d.*$/, ''), grade: Math.max(0, ...parts.map((part) => grades[part] || 0)) || 6 }
   }
-  function byVersionDesc(a, b) {
+  function byVersionDesc(a, b, newest = new Map()) {
     const x = versionKey(a.name), y = versionKey(b.name)
-    for (let i = 0; i < Math.max(x.length, y.length); i++) {
-      const d = (y[i] ?? 0) - (x[i] ?? 0)
-      if (d) return d
-    }
-    return a.name.localeCompare(b.name)
+    if (!x || !y) return x ? -1 : y ? 1 : a.name.localeCompare(b.name)
+    const ageX = Math.max(0, (newest.get(x.family) ?? x.major) - x.major)
+    const ageY = Math.max(0, (newest.get(y.family) ?? y.major) - y.major)
+    return ageX - ageY || y.major - x.major || y.grade - x.grade || y.minor - x.minor || a.name.localeCompare(b.name)
   }
 
   /** filteredModels 把搜索、分组、类型、厂商筛选叠起来。 */
@@ -852,23 +1031,29 @@
     const p = pricing()
     if (!p) return []
     let list = p.models.slice()
-    if (marketSort === 'latest') {
-      list.sort(byVersionDesc)
-    } else {
-      // 按实时数据归类：LLM 走 vendor 系列（Claude→GPT→Gemini→Grok→Kimi→GLM→Qwen→DS），
-      // 功能模型排在后面按 图片→视频→音频→向量。不用模型名正则，快照更新即跟随。
-      list.sort((a, b) => {
-        const ra = modelRank(a), rb = modelRank(b)
-        return ra.tier - rb.tier || ra.order - rb.order || a.name.localeCompare(b.name)
-      })
-    }
     if (marketGroup) list = list.filter((m) => (m.enable_groups || []).includes(marketGroup))
     if (marketKind !== 'all') list = list.filter((m) => marketKindOf(m) === marketKind)
     if (marketVendors.size) list = list.filter((m) => marketVendors.has(String(m.vendor_id)))
     const q = marketQuery.trim().toLowerCase()
     if (q) list = list.filter((m) => [m.name, vendorOf(m.vendor_id), m.description, m.tags,
       (m.enable_groups || []).join(' '), (m.supported_endpoint_types || []).join(' ')].join(' ').toLowerCase().includes(q))
-    return list
+    if (marketSort === 'name') return list.sort((a, b) => a.name.localeCompare(b.name))
+    if (marketSort === 'price-low' || marketSort === 'price-high') {
+      const value = (m) => { const p = priceOf(m); return p.perCall ?? p.entries?.[0]?.value ?? p.input }
+      const values = new Map(list.map((m) => [m, value(m)]))
+      const direction = marketSort === 'price-low' ? 1 : -1
+      return list.sort((a, b) => {
+        const x = values.get(a), y = values.get(b), knownX = Number.isFinite(x), knownY = Number.isFinite(y)
+        if (knownX !== knownY) return knownX ? -1 : 1
+        return (knownX ? (x - y) * direction : 0) || a.name.localeCompare(b.name)
+      })
+    }
+    const newest = new Map()
+    for (const model of list) {
+      const key = versionKey(model.name)
+      if (key) newest.set(key.family, Math.max(newest.get(key.family) || 0, key.major))
+    }
+    return list.sort((a, b) => byVersionDesc(a, b, newest))
   }
 
   /** refreshMarketList 只重画右侧列表，不整页 render（保住搜索框焦点）。 */
@@ -956,13 +1141,12 @@
         }, '全不选')),
       seg([['standard', '标准'], ['topup', '充值']], marketMode, (k) => { marketMode = k }, 'mode'),
       seg([['M', '/1M'], ['K', '/1K']], marketUnit, (k) => { marketUnit = k }, 'unit'),
-      el('button', {
-        class: 'market-tool' + (marketSort === 'latest' ? ' on' : ''),
-        'aria-pressed': String(marketSort === 'latest'),
-        'data-market-setting': 'sort', 'data-market-value': 'latest',
-        title: '按模型版本号降序（站点暂无上架时间字段）',
-        onclick: () => { marketSort = marketSort === 'latest' ? 'default' : 'latest'; refreshMarketView() },
-      }, '↑ 最新版本'),
+      el('select', {
+        class: 'market-tool market-sort', title: '排序', 'aria-label': '模型排序',
+        style: 'cursor:pointer;max-width:150px',
+        onchange: (e) => { marketSort = e.target.value; refreshMarketView() },
+      }, [['latest', '最新版本'], ['name', '名称'], ['price-low', '价格：从低到高'], ['price-high', '价格：从高到低']].map(([value, label]) =>
+        el('option', { value, selected: value === marketSort, text: label }))),
       el('div', { class: 'market-seg' },
         el('button', { 'data-market-setting': 'layout', 'data-market-value': 'grid', 'aria-pressed': String(marketLayout === 'grid'), title: '网格', onclick: () => { marketLayout = 'grid'; refreshMarketView() } }, '▦'),
         el('button', { 'data-market-setting': 'layout', 'data-market-value': 'list', 'aria-pressed': String(marketLayout === 'list'), title: '列表', onclick: () => { marketLayout = 'list'; refreshMarketView() } }, '☰')))

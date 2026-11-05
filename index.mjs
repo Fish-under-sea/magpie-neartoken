@@ -183,13 +183,13 @@ function kindOutput(kind) {
  */
 async function catalog(disabledGroups = new Set(), disabledModels = new Set()) {
   const groupsOut = new Map()
-  const env = await call('/api/pricing')
+  const [env, status] = await Promise.all([call('/api/pricing'), call('/api/status').catch(() => null)])
   const rows = Array.isArray(env?.data) ? env.data : []
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
   const ratios = env?.group_ratio && typeof env.group_ratio === 'object' ? env.group_ratio : {}
   const vendors = Array.isArray(env?.vendors) ? env.vendors : []
   // 完整快照给模型广场：页面按它一比一重绘站点 /pricing
-  writePricing(env)
+  writePricing(env, status?.success ? status.data : undefined)
   // 供应商列表的模型顺序：LLM 按系列 Claude→GPT→Gemini→Grok→Kimi→GLM→Qwen→DeepSeek，
   // 功能模型排在后面（图片→视频→音频→向量）。用 vendors 表名称 + 端点实时推导。
   const ordered = rows.slice().sort((a, b) => {
@@ -269,19 +269,22 @@ function writeGroups(groups) {
  * writePricing 把 /api/pricing 原样裁成模型广场需要的形状，写成 page/pricing.js。
  * 与包内那份静态快照同形状，页面优先用这份（实时），静态那份只是首次兜底。
  */
-function writePricing(env) {
+function writePricing(env, status) {
   try {
     const keep = ['description', 'tags', 'icon', 'vendor_id', 'enable_groups', 'supported_endpoint_types',
       'model_ratio', 'model_price', 'completion_ratio', 'cache_ratio', 'create_cache_ratio',
       'quota_type', 'billing_mode', 'billing_expr', 'context_window', 'max_tokens',
-      'input_modalities', 'reasoning_levels']
+      'input_modalities', 'reasoning_levels', 'image_ratio', 'audio_ratio', 'audio_completion_ratio',
+      'billing_usage_schema', 'billing_usage_examples', 'billing_disabled_usage', 'billing_plugin_variants']
     // 包内快照里带了一批站点 /pricing 页面的描述与运行状态（/api/pricing 没给）。
     // 实时刷新时把它们并回来，别让刷新把首屏说明冲掉。
     const extra = new Map()
+    let previousCurrency
     try {
       const old = readFileSync(join(here, 'page', 'pricing.js'), 'utf8')
       const raw = old.slice(old.indexOf('=') + 1).trim().replace(/;\s*$/, '')
       const prev = JSON.parse(raw)
+      previousCurrency = prev?.currency
       for (const m of prev?.models || []) {
         const x = {}
         for (const k of ['description', 'status', 'latency', 'throughput']) if (m[k] !== undefined) x[k] = m[k]
@@ -296,7 +299,12 @@ function writePricing(env) {
       if (!o.description && extra.get(name)?.description) o.description = extra.get(name).description
       return Object.assign(o, extra.get(name) || {})
     })
+    const currency = { ...previousCurrency }
+    for (const key of ['price', 'usd_exchange_rate', 'quota_display_type', 'quota_per_unit', 'custom_currency_symbol', 'custom_currency_exchange_rate']) {
+      if (status?.[key] !== undefined) currency[key] = status[key]
+    }
     const snap = {
+      ...(Object.keys(currency).length ? { currency } : {}),
       at: Date.now(),
       source: 'https://neartoken.cc/api/pricing',
       version: env?.pricing_version ?? '',

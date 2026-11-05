@@ -1,0 +1,9 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
+const source=fs.readFileSync(new URL('../page/app.js',import.meta.url),'utf8');const names=new Set(['filteredModels','versionKey','byVersionDesc','priceOf','taskPrices','priceCondition','timedPriceExpression']);const functions=[...source.matchAll(/  function (\w+)\([^\n]*\) \{[\s\S]*?\n  \}/g)].filter(m=>names.has(m[1])).map(m=>m[0]).join('\n');
+function sorted(models,sort='latest',group=''){const ctx=vm.createContext({marketSort:sort,marketGroup:group,marketMode:'standard',marketQuery:'',marketKind:'all',marketVendors:new Set(),pricing:()=>({models,groups:{test:1.5}}),modelRank:()=>({tier:0,order:0}),vendorOf:()=>'',marketKindOf:()=>'chat'});vm.runInContext(functions,ctx);return Array.from(ctx.filteredModels(),m=>m.name)}
+test('默认启用最新版本排序',()=>assert.match(source,/let marketSort = 'latest'/));
+test('最新版本按官方系列新旧与档位排序',()=>assert.deepEqual(sorted([{name:'gpt-6.1-sol'},{name:'gpt-5.5'},{name:'gpt-6-astra'}]),['gpt-6-astra','gpt-6.1-sol','gpt-5.5']));
+test('名称排序可用',()=>assert.deepEqual(sorted([{name:'z-model'},{name:'a-model'}],'name'),['a-model','z-model']));
+const models=[{name:'a-expensive',quota_type:0,model_ratio:1,completion_ratio:2,enable_groups:['test']},{name:'b-cheaper',billing_mode:'tiered_expr',billing_expr:'tier("base", p * 0.5 + c * 1)',model_ratio:100,enable_groups:['test']},{name:'c-call',quota_type:1,model_price:0.4,enable_groups:['test']},{name:'0-unknown',quota_type:0,billing_usage_schema:{n:{unit:'count'}},enable_groups:['test']}];
+test('价格升序按当前展示价格而不是模型倍率排序，未知置后',()=>assert.deepEqual(sorted(models,'price-low','test'),['c-call','b-cheaper','a-expensive','0-unknown']));
+test('价格降序未知价格仍置后',()=>assert.deepEqual(sorted(models,'price-high','test'),['a-expensive','b-cheaper','c-call','0-unknown']));
