@@ -181,15 +181,66 @@ function kindOutput(kind) {
  * 「站点原文组名 + 倍率 + 模型」。每行带自己的 x-neartoken-group 头，请求
  * 按那一行走那一组——这就是"模型后面跟着它的分组"。
  */
-async function catalog(disabledGroups = new Set(), disabledModels = new Set()) {
+/**
+ * readBundledPricing 读包内静态快照，转成 /api/pricing 的 env 形状。
+ * 快照里模型用 name，站点用 model_name，这里补回去；其余目录字段按同名映射。
+ */
+function readBundledPricing() {
+  try {
+    const raw = readFileSync(join(here, 'page', 'pricing.js'), 'utf8')
+    const body = raw.slice(raw.indexOf('=') + 1).trim().replace(/;\s*$/, '')
+    const snap = JSON.parse(body)
+    const models = Array.isArray(snap?.models) ? snap.models : []
+    if (!models.length) return null
+    const data = models.map((m) => {
+      const row = { ...m }
+      delete row.name
+      row.model_name = m.name
+      return row
+    })
+    return {
+      data,
+      group_ratio: snap.groups && typeof snap.groups === 'object' ? snap.groups : {},
+      group_refs: snap.refs && typeof snap.refs === 'object' ? snap.refs : {},
+      usable_group: snap.notes && typeof snap.notes === 'object' ? snap.notes : {},
+      auto_groups: Array.isArray(snap.auto) ? snap.auto : [],
+      vendors: Array.isArray(snap.vendors) ? snap.vendors : [],
+      supported_endpoint: snap.endpoints && typeof snap.endpoints === 'object' ? snap.endpoints : {},
+      pricing_version: snap.version || '',
+    }
+  } catch { return null }
+}
+
+/**
+ * loadPricingEnv 先取站点实时目录；失败或返回空时用包内快照兜底。
+ * 插件在场时宿主完全依赖 provider.models() 给模型表，一次网络抖动不该让
+ * 整张模型表消失（表现为供应商从列表掉下、要重新连接）。
+ */
+async function loadPricingEnv() {
+  try {
+    const [env, status] = await Promise.all([
+      call('/api/pricing'),
+      call('/api/status').catch(() => null),
+    ])
+    if (Array.isArray(env?.data) && env.data.length) {
+      return { env, status, bundled: false }
+    }
+  } catch { /* 落到包内快照 */ }
+  const snap = readBundledPricing()
+  return snap
+    ? { env: snap, status: null, bundled: true }
+    : { env: { data: [] }, status: null, bundled: true }
+}
+
+async function catalog(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map()) {
   const groupsOut = new Map()
-  const [env, status] = await Promise.all([call('/api/pricing'), call('/api/status').catch(() => null)])
+  const { env, status, bundled } = await loadPricingEnv()
   const rows = Array.isArray(env?.data) ? env.data : []
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
   const ratios = env?.group_ratio && typeof env.group_ratio === 'object' ? env.group_ratio : {}
   const vendors = Array.isArray(env?.vendors) ? env.vendors : []
   // 完整快照给模型广场：页面按它一比一重绘站点 /pricing
-  writePricing(env, status?.success ? status.data : undefined)
+  if (!bundled) writePricing(env, status?.success ? status.data : undefined)
   // 供应商列表的模型顺序：LLM 按系列 Claude→GPT→Gemini→Grok→Kimi→GLM→Qwen→DeepSeek，
   // 功能模型排在后面（图片→视频→音频→向量）。用 vendors 表名称 + 端点实时推导。
   const ordered = rows.slice().sort((a, b) => {
@@ -210,7 +261,13 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set()) {
       const had = groupsOut.get(g)
       groupsOut.set(g, { name: g, ratio: 0, models: (had?.models || 0) + 1, ref: '' })
     }
-    const groups = all.filter((g) => !disabledGroups.has(String(g ?? '').trim()))
+    const groups = all.filter((g) => {
+      const name = String(g ?? '').trim()
+      if (!name || disabledGroups.has(name)) return false
+      // 该模型在分组级启用状态里有记录时，只保留它被启用的分组
+      if (enabledByGroup.has(model)) return enabledByGroup.get(model).has(name)
+      return true
+    })
     if (!groups.length) continue
     // 一个模型只出一行：多分组不再展开成多行，否则「只启用一个模型」在
     // 供应商列表里仍会冒出五六行同名条目。分组与倍率折进显示名里，
@@ -240,7 +297,7 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set()) {
       },
     }
   }
-  writeGroups([...groupsOut.values()].map((g) => ({
+  if (!bundled) writeGroups([...groupsOut.values()].map((g) => ({
     ...g,
     ratio: ratioOf(ratios, g.name),
     ref: refs[g.name] ? String(refs[g.name]) : '',
@@ -428,6 +485,21 @@ export default async function neartoken(input, options) {
   }
   const disabledGroups = asSet(options?.disabledGroups)
   const disabledModels = asSet(options?.disabledModels)
+  // 分组级启用状态：模型 → 它在哪些分组里被启用；没记录的模型按默认（最便宜组）处理。
+  const enabledByGroup = new Map()
+  const rawByGroup = (() => {
+    const raw = options?.enabledByGroup
+    if (raw && typeof raw === 'object') return raw
+    if (typeof raw === 'string' && raw.trim()) {
+      try { return JSON.parse(raw) } catch { return null }
+    }
+    return null
+  })()
+  if (rawByGroup && typeof rawByGroup === 'object') {
+    for (const [name, list] of Object.entries(rawByGroup)) {
+      enabledByGroup.set(name, new Set(Array.isArray(list) ? list.map(String) : []))
+    }
+  }
   // 后台每 5 分钟把 /api/pricing 再拉一遍写回 page/pricing.js，
   // 页面每分钟重载该文件——模型清单与分组就跟着站点实时同步。
   scheduleCatalogSync()
@@ -553,7 +625,7 @@ export default async function neartoken(input, options) {
        */
       async models() {
         await stampLatest()
-        return catalog(disabledGroups, disabledModels)
+        return catalog(disabledGroups, disabledModels, enabledByGroup)
       },
     },
   }
