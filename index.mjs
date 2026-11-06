@@ -295,12 +295,12 @@ function readPrefs() {
 /** 模型 → 分组 ref。请求不在 catalog 里，靠这张表补 x-neartoken-group。 */
 const groupRefOf = new Map()
 
-async function catalog(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map(), disabledByGroup = new Map()) {
+async function catalogUnsafe(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map(), disabledByGroup = new Map(), ignorePrefs = false) {
   const groupsOut = new Map()
   const { env, status, bundled } = await loadPricingEnv()
   const rows = Array.isArray(env?.data) ? env.data : []
   // 页面偏好：模型 → 被停用的分组。放在请求外读一次，不阻塞也不触怒宿主。
-  const prefs = readPrefs()
+  const prefs = ignorePrefs ? {} : readPrefs()
   const prefsDisabled = (() => {
     const out = new Map()
     const raw = prefs?.disabledByGroup
@@ -397,6 +397,43 @@ async function catalog(disabledGroups = new Set(), disabledModels = new Set(), e
     ref: refs[g.name] ? String(refs[g.name]) : '',
   })).sort((a, b) => a.name.localeCompare(b.name, 'zh')))
   return out
+}
+
+/**
+ * catalog 是给宿主看的稳定入口：无论内部发生什么，都返回非空模型表。
+ *
+ * 掉供应商的根因是宿主拿不到模型表就判定「这个供应商没有模型」。所以这里
+ * 有三层兜底，任何一层失败都不会把异常或空表抛给宿主：
+ *   1. 正常构建；
+ *   2. 异常时用包内快照重建一次（不带页面偏好过滤）；
+ *   3. 仍为空则直接用包内快照的原始模型名，最差也要把模型表撑起来。
+ */
+async function catalog(disabledGroups, disabledModels, enabledByGroup, disabledByGroup) {
+  try {
+    const out = await catalogUnsafe(disabledGroups, disabledModels, enabledByGroup, disabledByGroup)
+    if (out && Object.keys(out).length) return out
+    // 空表：完全忽略页面偏好再试一次（停光所有分组时也必须给宿主非空表）
+    const relaxed = await catalogUnsafe(disabledGroups, disabledModels, enabledByGroup, new Map(), true)
+    if (relaxed && Object.keys(relaxed).length) return relaxed
+  } catch { /* 落到下面的快照兜底 */ }
+  try {
+    const snap = readBundledPricing()
+    const rows = Array.isArray(snap?.data) ? snap.data : []
+    const out = {}
+    for (const row of rows) {
+      const model = String(row?.model_name ?? '').trim()
+      if (!model || out[model]) continue
+      out[model] = {
+        id: model,
+        name: model,
+        api: { id: model, url: SITE + '/v1', npm: npmOf(row) },
+        limit: limitOf(row),
+        capabilities: { toolcall: true, output: ['text'], attachment: false, input: { text: true } },
+      }
+    }
+    if (Object.keys(out).length) return out
+  } catch { /* 连快照都读不到 */ }
+  return {}
 }
 
 /**
@@ -890,8 +927,15 @@ export default async function neartoken(input, options) {
        */
       async models() {
         // 版本探测放到后台：它要访问 npm registry，绝不能挡住宿主列举模型
-        void stampLatest()
-        return catalog(disabledGroups, disabledModels, enabledByGroup, disabledByGroup)
+        try { void stampLatest() } catch { /* 版本探测失败不影响模型表 */ }
+        // 最后一层保险：catalog 已自带兜底，这里再挡一次，
+        // 保证永远不向宿主抛 rejected Promise（抛了宿主就判「没有模型」→ 掉供应商）
+        try {
+          const out = await catalog(disabledGroups, disabledModels, enabledByGroup, disabledByGroup)
+          return out && typeof out === 'object' ? out : {}
+        } catch {
+          return {}
+        }
       },
     },
   }

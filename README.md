@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**1.0.1**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**1.0.2**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.0.1.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.0.2.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,16 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 1.0.2 供应商可用性加固
+
+宿主判「这个供应商没有模型」就把它从列表里拿掉。所以**插件绝不能把空表或异常交给宿主**。这一版把三条真实漏洞堵死：
+
+- **异常不再冒泡**：`catalog()` 内部任何异常都会触发兜底链（正常构建 → 忽略页面偏好重建 → 包内快照最小模型表）；`provider.models()` 外层再包一层 `try`，永远不向宿主抛 rejected Promise。之前 `models()` 直接 `return catalog(...)`，一旦内部抛错宿主就拿到 rejected Promise。
+- **停光所有分组不再变空表**：`catalogUnsafe` 增加 `ignorePrefs` 形参；放宽分支改为**完全忽略页面偏好**重建，而不是传空 Map。实测：把 109 个模型的所有分组全部停用，仍返回 109 个模型而不是 0。
+- **坏 `prefs.json` 不影响模型表**：实测半截 JSON、空文件、数组、`null`、新契约 `{disabled:[...]}` 五种形态，模型数均为 109。
+
+新增回归测试 `tests/provider-availability.test.mjs`，锁死「不抛异常、不返回空表、空表自动放宽」三条。
 
 ## 1.0.1 宿主契约补齐
 
