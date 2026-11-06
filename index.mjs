@@ -678,6 +678,113 @@ function fmtStamp(sec) {
 }
 
 /**
+ * logKindOf 把站点的日志 type 换成页面上的类型词。
+ *
+ * 实测 /api/log/token 的 type 是数字（当前账号全是 2），不是字符串，
+ * 所以不能写死「消耗」。编码沿用站点（new-api）的既有约定：
+ * 1 充值 / 2 消费 / 3 管理 / 4 系统 / 5 错误 / 6 退款；未知值原样回显。
+ */
+function logKindOf(type) {
+  const n = Number(type)
+  switch (n) {
+    case 1: return '充值'
+    case 2: return '消费'
+    case 3: return '管理'
+    case 4: return '系统'
+    case 5: return '错误'
+    case 6: return '退款'
+    default: return typeof type === 'string' && type.trim() ? type.trim() : '消费'
+  }
+}
+
+/** 数字尽量短：2 → 「2」，0.5 → 「0.5」，1.25 → 「1.25」。 */
+function shortNum(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ''
+  return String(Math.round(n * 10000) / 10000)
+}
+
+/**
+ * tierPrices 从计费表达式里取出某个档位的（输入, 输出）单价。
+ *
+ * 站点 expr 形如：
+ *   len <= 272000 ? tier("0_272k", p * 2 + cr * 0.1 + cc * 2.5 + c * 10)
+ *                 : tier("272k_plus", p * 4 + ... + c * 15)
+ * 其中 p 是输入系数、c 是输出系数，单位都是「元 / 百万 token」。
+ * 注意 cr（缓存读）和 cc（缓存写）也含字母 c，所以匹配单字符变量要用负向断言。
+ */
+function tierPrices(expr, wantTier) {
+  if (typeof expr !== 'string' || !expr) return null
+  const re = /tier\("([^"]+)"\s*,([^)]*)\)/g
+  const found = []
+  let m
+  while ((m = re.exec(expr))) found.push({ name: m[1], body: m[2] })
+  if (!found.length) return null
+  const hit = (wantTier && found.find((f) => f.name === wantTier)) || found[0]
+  const pick = (re2) => {
+    const mm = hit.body.match(re2)
+    return mm ? Number(mm[1]) : undefined
+  }
+  const input = pick(/(?<![a-z])p\s*\*\s*([\d.]+)/)
+  const output = pick(/(?<![a-z])c\s*\*\s*([\d.]+)/)
+  if (input === undefined && output === undefined) return null
+  return { name: hit.name, input, output }
+}
+
+/**
+ * tierLabel 把站点的档位 key 换成看得懂的词。
+ *
+ * off_peak / peak 是「谷时 / 峰时」时段的内部 key，直接显示像乱码；
+ * 别的档位（0_272k 这类长度分层）站点自己就用这个写法，保持原样。
+ */
+function tierLabel(name) {
+  const s = String(name || '').trim()
+  if (!s) return '标准'
+  const map = { off_peak: '谷时', peak: '峰时', offpeak: '谷时', standard: '标准', default: '标准' }
+  return map[s.toLowerCase()] || s
+}
+
+/**
+ * detailOf 拼「详情」列，形状对齐原站：`档位 · ¥输入 / ¥输出/M`。
+ *
+ * 价格不是倍率本身，站点有两条路：
+ *  1. 表达式计费（billing_mode=tiered_expr）：解码 expr_b64，取该档位里
+ *     p 与 c 的系数——实测 gpt-6.1-sol 是 ¥2 / ¥10/M，与官网一致；
+ *  2. 倍率计费：输入价 = model_ratio × 2，输出价 = model_ratio × completion_ratio × 2
+ *     （实测 gpt-6.1-terra：0.5 与 5 → ¥1 / ¥5/M，与官网一致）。
+ * 两条都不成立时才退回额度，不编造数字。
+ */
+function detailOf(other, quota) {
+  if (!other || typeof other !== 'object') return ''
+  const tier = typeof other.matched_tier === 'string' ? other.matched_tier.trim() : ''
+
+  // 路线 1：表达式计费
+  let expr = ''
+  if (typeof other.expr_b64 === 'string' && other.expr_b64) {
+    try { expr = Buffer.from(other.expr_b64, 'base64').toString('utf8') } catch { expr = '' }
+  }
+  const priced = tierPrices(expr, tier)
+  if (priced) {
+    const a = priced.input !== undefined ? '¥' + shortNum(priced.input) : '—'
+    const b = priced.output !== undefined ? '¥' + shortNum(priced.output) : '—'
+    return `${tierLabel(priced.name || tier)} · ${a} / ${b}/M`
+  }
+
+  // 路线 2：倍率计费
+  const mr = num(other.model_ratio)
+  if (mr !== undefined) {
+    const cr = num(other.completion_ratio)
+    const inP = mr * 2
+    const outP = mr * (cr !== undefined && cr > 0 ? cr : 1) * 2
+    if (inP > 0 || outP > 0) return `标准 · ¥${shortNum(inP)} / ¥${shortNum(outP)}/M`
+  }
+
+  // 路线 3：什么都没有就退回额度
+  if (quota !== undefined) return '额度 ' + quota
+  return ''
+}
+
+/**
  * fetchLogs 拉站点逐条日志，归一化成页面要的形状写进 page/logs.js。
  * 优先 /api/log/token（按 API key 查，插件正好有这把钥匙）；
  * 站点若只给 /api/log/self（需要登录会话），这里会自动退回。
@@ -744,11 +851,12 @@ async function fetchLogs(trigger = 'tick') {
       return {
         at: t,
         time: t ? fmtStamp(t) : '',
-        kind: '消耗',
+        // 类型按站点 type 值映射，不写死「消耗」：1 充值 / 2 消费 / 3 管理 / 4 系统 / 5 错误 / 6 退款
+        kind: logKindOf(r?.type),
         tokenName: r?.token_name || r?.tokenName || '',
         group: r?.group || other?.group || '',
         model: pickModel(r?.model_name, r?.modelName, other?.model_name),
-        upModel: pickModel(other?.upstream_model, other?.up_model, other?.request_model),
+        upModel: pickModel(other?.upstream_model, other?.up_model, other?.request_model, other?.upstream_model_name),
         respModel: pickModel(other?.response_model, other?.downstream_model),
         effort: other?.reasoning_effort || '',
         // 吞吐 = 输出 token / 生成耗时（总时长减去首字等待）。
@@ -769,8 +877,8 @@ async function fetchLogs(trigger = 'tick') {
         cost: quota === undefined ? '' : '¥' + (quota / quotaPerUnit).toFixed(6),
         ttft: firstToken(r),
         dur: secs,
-        detail: [other?.billing_mode, other?.group_ratio ? '×' + other.group_ratio : '', other?.model_ratio ? 'model ×' + other.model_ratio : '']
-          .filter(Boolean).join(' · '),
+        // 详情按站点真实字段拼：计价档位 · 单价 / 单价（原站就是这个形状）
+        detail: detailOf(other, quota),
         isStream: r?.is_stream ?? r?.isStream,
       }
     })
