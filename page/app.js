@@ -406,24 +406,12 @@
         el('span', { class: 'vt-v', text: unit + totalNum.toFixed(2) })))
       parts.push(el('div', { class: 'vouchers' }, vouchers.map((v) =>
         el('div', { class: 'voucher' },
-          el('span', { class: 'who' }, groupBadge(String(v.group || ''))),
+          el('span', { class: 'who' }, groupBadge(String(v.group || '')), el('span', { class: 'vname', text: groupNameOnly(String(v.group || '')) })),
           el('span', { class: 'amt', text: v.amount })))))
     } else {
       parts.push(el('p', { class: 'note', text: '没有可用代金券。站点的邀请计划会发分组券。' }))
     }
     if (view.refreshedAt) parts.push(el('p', { class: 'note', text: '余额截至 ' + clockText(view.refreshedAt) }))
-    // 诊断：宿主有没有来要模型表、要到的表多大。掉供应商时靠这行定位。
-    const health = self.NEARTOKEN_HEALTH
-    if (health && Array.isArray(health.recent) && health.recent.length) {
-      const last = health.recent[health.recent.length - 1]
-      const bad = health.recent.filter((x) => !x.ok || !x.count).length
-      parts.push(el('p', {
-        class: 'note',
-        title: health.recent.map((x) => clockText(x.at) + ' → ' + (x.ok ? x.count + ' 个模型 / ' + x.ms + 'ms' : '失败: ' + x.error)).join('\n'),
-        text: '模型表诊断：最近 ' + health.recent.length + ' 次调用中 ' + bad + ' 次为空或失败；最近一次 '
-          + (last.ok ? '返回 ' + last.count + ' 个模型（' + last.ms + 'ms）' : '失败：' + (last.error || '未知')),
-      }))
-    }
     return card('账户', ...parts)
   }
 
@@ -1450,25 +1438,25 @@
 
   /** 读回分组级停用表。只认「模型名 → 分组数组」的合法形状，其余当没有记录。 */
   const DISABLED_KEY = 'neartoken:disabledByGroup'
-  /** 宿主有 neartoken:prefs 就用它（写文件、不碰 options、不会让供应商掉）；没有就回本机存储。 */
+  /**
+   * 宿主 neartoken:prefs（op:get）回 {disabled:[{model,groups}], …}。
+   * 宿主不可用时回本机存储。旧版 options.disabledByGroup 只在两者都没有时兜底。
+   */
   async function initDisabledByGroup() {
     let stored = null
     try {
-      const viaHost = await bridge.call('neartoken:prefs', { op: 'get' })
-      if (viaHost && typeof viaHost === 'object') {
-        if (Array.isArray(viaHost.disabled)) {
-          // 宿主契约：{disabled:[{model, groups}]} → Map 形状
-          const map = {}
-          for (const item of viaHost.disabled) {
-            if (!item || typeof item.model !== 'string') continue
-            if (Array.isArray(item.groups) && item.groups.length) map[item.model] = item.groups.map(String)
-          }
-          if (Object.keys(map).length) stored = map
-        } else if (viaHost.disabledByGroup && typeof viaHost.disabledByGroup === 'object') {
-          stored = viaHost.disabledByGroup
+      const view = await bridge.call('neartoken:prefs', { op: 'get' })
+      if (view && typeof view === 'object' && Array.isArray(view.disabled)) {
+        stored = {}
+        for (const item of view.disabled) {
+          if (!item || typeof item.model !== 'string' || !item.model) continue
+          const groups = Array.isArray(item.groups) && item.groups.length
+            ? item.groups
+            : (cheapestGroupOfName(item.model) ? [cheapestGroupOfName(item.model)] : [])
+          if (groups.length) stored[item.model] = groups
         }
       }
-    } catch { /* 宿主还没这个调用 */ }
+    } catch { /* 宿主还没这个调用，走本机存储 */ }
     if (!stored) {
       try {
         const raw = localStorage.getItem(DISABLED_KEY)
@@ -1488,6 +1476,12 @@
       const groups = list.map((g) => String(g ?? '').trim()).filter(Boolean)
       if (groups.length) disabledByGroup.set(String(name), new Set(groups))
     }
+  }
+
+  /** 宿主只存了模型名时，用目录里这个模型最便宜的分组补全 groups（页面按分组判启停）。 */
+  function cheapestGroupOfName(name) {
+    const m = pricing()?.models.find((x) => x.name === name)
+    return m ? cheapestGroup(m) : ''
   }
 
   /** 官网给分组的说明；没有就返回空串，不编内容。 */
@@ -1978,11 +1972,6 @@
       el('button', { class: 'lg-btn icon-btn', title: '下一页', disabled: logPage >= pageCount(totalCount), onclick: () => { if (logPage < pageCount(totalCount)) { logPage += 1; render() } } }, '›'),
       el('button', { class: 'lg-btn icon-btn', title: '最后一页', disabled: logPage >= pageCount(totalCount), onclick: () => { logPage = pageCount(totalCount); render() } }, '»'))
 
-    // 有逐条数据源但当前窗口为空：明确说明，而不是回落到聚合视图
-    const hasLiveSource = !!liveLogs && Array.isArray(liveLogs.rows)
-    const liveEmpty = hasLiveSource && liveLogs.rows.length === 0
-    const emptyNote = liveEmpty ? '这个窗口没有逐条记录。' : null
-
     const all = (data?.models || []).slice().sort((a, b) => b.tokens - a.tokens)
     const total = all.reduce((sum, m) => sum + m.tokens, 0) || 1
     const q = logQuery.trim().toLowerCase()
@@ -2061,17 +2050,6 @@
         el('p', { class: 'note warn', text: data.reason === 'unreachable' ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' }))
     }
 
-    if (liveEmpty) {
-      return el('section', { class: 'logs' },
-        el('h2', { class: 'logs-title', text: '通用日志' }),
-        el('div', { class: 'logs-panel' },
-          toolbar, moreRow, statbar,
-          el('div', { class: 'lg-table-wrap' },
-            el('p', { class: 'lg-empty', text: emptyNote })),
-          pagerBar(0)),
-        el('p', { class: 'note', text: '插件已连上站点日志接口，当前时间窗口没有记录。' }))
-    }
-
     if (detailRows && detailRows.length) {
       const colsD = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
       const pageRowsD = pageSlice(detailRows)
@@ -2106,13 +2084,9 @@
             [['请求模型', r.model], ['上游请求模型', r.upModel], ['响应模型', r.respModel]].map(([k, v]) =>
               el('div', { class: 'lg-map-row' }, el('span', { class: 'lg-map-k', text: k }), el('span', { class: 'lg-map-v', text: v || '—' }))) ) : null),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-flow' + (r.isStream === false ? ' off' : ''), text: r.isStream === false ? '非流' : '流' }),
+          el('span', { class: 'lg-flow', text: '流' }),
           el('span', { class: 'lg-sub' }, r.tps ? el('span', { text: r.tps + ' t/s' }) : dash('sm'))),
-        el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
-          r.cache != null && Number(r.cache) > 0
-            ? el('span', { class: 'lg-sub', text: '缓存 ' + fmtNum(r.cache) })
-            : null),
+        el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
         el('span', { class: 'num' }, r.bytes != null ? fmtBytes(r.bytes) : dash()),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (r.cost || '—') })),
@@ -2231,29 +2205,15 @@
   let saveTimer = null
   let sending = false
   let sendAgain = false
-  /** 分组收起 / 置顶：宿主契约里的 hiddenGroups 与 pinned。 */
-  function hiddenGroupsOf() {
-    // 这是「被隐藏的分组名」列表，不是侧栏区块名。
-    // 页面目前没有隐藏分组的功能，给空数组，避免宿主把 'group' 当成分组名过滤。
-    return []
-  }
-  function pinnedOf() {
-    return marketGroup ? [marketGroup] : []
-  }
-
   async function flushDisabled() {
     const plain = Object.fromEntries([...disabledByGroup].map(([k, v]) => [k, [...v]]))
-    // 先走宿主偏好文件调用：写文件不会重建插件宿主，供应商不会因此掉。
+    // 宿主协议：{op:'set', disabled:[{model, groups}]}。写文件不重建插件宿主，供应商不会因此掉。
+    const disabled = Object.entries(plain).map(([model, groups]) => ({ model, groups }))
     try {
-      // 与宿主契约一致：{op:'set', disabled:[{model, groups}]}
-      const r = await bridge.call('neartoken:prefs', {
-        op: 'set',
-        disabled: [...disabledByGroup].map(([model, groups]) => ({ model, groups: [...groups] })),
-        hiddenGroups: hiddenGroupsOf(),
-        pinned: pinnedOf(),
-      })
-      if (r && r.ok) { lastError = ''; return }
-    } catch { /* 宿主还没这个调用，落到本机存储 */ }
+      await bridge.call('neartoken:prefs', { op: 'set', disabled })
+      lastError = ''
+      return
+    } catch { /* 宿主不可用，落到本机存储 */ }
     try {
       localStorage.setItem(DISABLED_KEY, JSON.stringify(plain))
       lastError = ''
