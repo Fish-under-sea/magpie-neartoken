@@ -280,6 +280,43 @@
 
 接口事实与待确认事项见 [HANDOFF-上游站适配.md](./HANDOFF-上游站适配.md)。该文档随仓库提供，不包含在 npm 运行包中。
 
+## 上游与致谢
+
+这个插件是**第三方扩展**，不属于 magpie 官方，也不代表上游作者的观点。能做到今天这些能力，全靠下面这些项目：
+
+### 宿主：magpie
+
+- **作者**：[yetone](https://github.com/yetone)
+- **仓库**：<https://github.com/yetone/magpie>
+
+本插件的 `auth`（`authorize` / `loader` / `usage`）、`config`、`provider.models`、页面插件机制（`magpie.page`、`magpie.calls`、`page/_magpie/bridge.js`）全部按 magpie 的插件契约实现。没有 magpie 的「一个网关、多供应商、插件化页面」这套设计，这个包无从存在。
+
+### 插件形状：OpenCode
+
+- **作者**：SST（[sst/opencode](https://github.com/sst/opencode)）
+- magpie 沿用了 OpenCode 的 v1 插件形状（`export async function(ctx) => ({ config, auth, provider })`），本插件按同一形状编写，因此也能被 OpenCode 形态的加载器读取。
+
+### 站点底座：new-api
+
+- **作者**：Calcium-Ion 与贡献者
+- **仓库**：<https://github.com/Calcium-Ion/new-api>
+
+NearToken 的模型目录、分组倍率、额度与日志接口沿用 new-api 的约定（`/api/pricing`、`/api/status`、`/api/log/token`、`quota_per_unit` 等）。本插件对这些接口的字段映射、`other` 字段解析与额度换算，都以 new-api 的行为为准。
+
+### 模型方言：Vercel AI SDK
+
+- `@ai-sdk/openai-compatible`、`@ai-sdk/anthropic`、`@ai-sdk/google` 等由 [Vercel AI SDK](https://github.com/vercel/ai) 提供。每个模型用哪个方言，遵循上游目录给出的 `api.npm`。
+
+### 服务与数据
+
+- [NearToken](https://neartoken.cc)：提供账户、模型目录、分组路由与用量数据。站点图标（`page/icon.png`）取自站方，仅用于识别该服务。
+- 模型广场的分组徽标分类、层级与配色，参考站点 `/pricing` 与 `/usage-logs/common` 的公开界面实现。
+
+### 明确边界
+
+- 本仓库**只放插件本身**：不含 magpie 源码、补丁或改动，也不进 magpie 的内置页面或发行物。
+- 上游接口变动可能导致本插件字段映射失效；以站点真实响应为准，不以本文档推断为准。
+
 ## 许可
 
 MIT。站点图标（`page/icon.png`）取自 `neartoken.cc`，仅用于识别该服务。
