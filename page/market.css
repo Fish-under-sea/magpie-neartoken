@@ -465,7 +465,7 @@
 .lg-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 .lg-dot.blue { background: #5b8def; } .lg-dot.red { background: #e06b7a; }
 .lg-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.lg-table-wrap { border: 1px solid var(--nt-line); border-radius: 12px; overflow: hidden; }
+.lg-table-wrap { border: 1px solid var(--nt-line); border-radius: 12px; overflow: visible; }
 .lg-table { display: flex; flex-direction: column; }
 .lg-row { display: grid; grid-template-columns: 1.1fr 1fr 1.6fr .6fr .8fr 1fr .8fr .7fr .7fr; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--nt-line); font-size: 11.5px; }
 .lg-row:first-child { border-top: 0; }
@@ -911,17 +911,6 @@
 }
 .logs .lg-map:hover, .logs .lg-map.on { color: var(--nt-ink); background: rgba(255,255,255,.08); }
 .logs .lg-map svg { display: block; }
-/* 映射面板：贴在模型列下方 */
-.logs .lg-map-pop {
-  display: flex; flex-direction: column; gap: 4px;
-  margin-top: 4px; padding: 8px 10px; border-radius: 10px;
-  border: 1px solid var(--nt-line); background: #1b1d22;
-  box-shadow: 0 10px 28px rgba(0,0,0,.45);
-  position: relative; z-index: 30;
-}
-.logs .lg-map-row { display: grid; grid-template-columns: 76px 1fr; gap: 8px; align-items: baseline; }
-.logs .lg-map-k { font-size: 10.5px; color: var(--nt-faint); }
-.logs .lg-map-v { font-size: 11px; color: var(--nt-ink); font-family: var(--nt-code); }
 
 /* 分组胶囊再压扁：高度 20px，左右内边距更小，倍率与徽标同步收紧 */
 .market-aside .chip,
@@ -1206,3 +1195,59 @@
 .card .voucher .who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
 .card .voucher .vname { font-size: 11.5px; color: var(--nt-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .voucher .amt { flex: none; font-family: var(--nt-code); font-size: 11.5px; color: #e0a44a; }
+
+/* 映射浮层：绝对定位在模型单元格下方，不占列宽也不撑高行 */
+.logs .lg-cell-stack { position: relative; }
+.logs .lg-map-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 60;
+  display: flex; flex-direction: column; gap: 6px;
+  width: max-content; min-width: 240px; max-width: 360px;
+  padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--nt-line); background: #1b1d22;
+  box-shadow: 0 16px 40px rgba(0,0,0,.55);
+}
+.logs .lg-map-title { font-size: 10px; color: var(--nt-faint); margin-bottom: 2px; }
+.logs .lg-map-row { display: flex; align-items: baseline; gap: 14px; white-space: nowrap; }
+.logs .lg-map-k { flex: none; width: 78px; font-size: 10.5px; color: var(--nt-muted); }
+.logs .lg-map-v { font-size: 11px; color: var(--nt-ink); font-family: var(--nt-code); }
+
+/* 可点击的令牌胶囊 */
+.logs .lg-copyable { cursor: pointer; transition: border-color .15s ease, background-color .15s ease; }
+.logs .lg-copyable:hover { border-color: var(--nt-accent); background: rgba(255,255,255,.06); }
+/* 顶部提示条 */
+.nt-toast {
+  position: fixed; left: 50%; top: 14px; transform: translate(-50%, -14px);
+  z-index: 90; display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border-radius: 999px;
+  background: #1f2d24; border: 1px solid rgba(76,195,138,.5); color: #7fe0a8;
+  font-size: 12px; opacity: 0; pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+}
+.nt-toast.show { opacity: 1; transform: translate(-50%, 0); }
+.nt-toast.bad { background: #2d1f22; border-color: rgba(224,107,122,.5); color: #ff9aa6; }
+.nt-toast-icon { font-size: 12px; }
+
+/* 分组倍率小字 */
+.logs .gb-mul { font-size: 9.5px; color: var(--nt-faint); margin-left: 2px; font-family: var(--nt-code); }
+
+/* 模型名可点：悬停时轻微高亮，提示可展开映射 */
+.logs .lg-model-tap { cursor: pointer; border-radius: 8px; padding: 1px 4px; margin: -1px -4px; transition: background-color .12s ease; }
+.logs .lg-model-tap:hover { background: rgba(255,255,255,.06); }
+/* 复制反馈不再用徽标，隐藏旧样式 */
+.copy-badge { display: none !important; }
+
+/* 费用列：胶囊与首行同一基线（逐条与汇总都走这里） */
+.logs .lg-cost { font-family: var(--nt-code); font-size: 11px; white-space: nowrap; }
+.logs .lg-cell-stack > .lg-pill.lg-cost { height: 18px; }
+
+/* 放开裁剪后：表头与末行自己带圆角，视觉仍是整块圆角卡片 */
+.logs .lg-table .lg-row.head { border-radius: 12px 12px 0 0; }
+.logs .lg-table .lg-row:last-child { border-radius: 0 0 12px 12px; }
+/* 浮层提到最上层，避免被后续行覆盖 */
+.logs .lg-map-pop { z-index: 80; }
+
+/* 关键：承载浮层的单元格不能 overflow:hidden，否则浮层被裁掉、点开也看不到 */
+.logs .lg-row > .lg-cell-stack { overflow: visible; }
+.logs .lg-row > .lg-cell-stack > span { min-width: 0; }
+.logs .lg-row > .lg-cell-stack .lg-model,
+.logs .lg-row > .lg-cell-stack .lg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

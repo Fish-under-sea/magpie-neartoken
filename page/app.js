@@ -366,6 +366,14 @@
         stamp ? el('span', { class: 'note', style: 'margin:0 0 0 2px', text: stamp }) : null))
   }
 
+  /** groupRatioOf 从快照 groups 里取该分组的倍率。 */
+  function groupRatioOf(name) {
+    const p = pricing()
+    const groups = p?.groups || {}
+    const v = groups[String(name || '')]
+    return Number.isFinite(Number(v)) ? Number(v) : undefined
+  }
+
   /** groupNameOnly 去掉 "[低价][满血] " 这类前缀，只留组名本体。 */
   function groupNameOnly(name) {
     return String(name || '').replace(/^(\s*\[[^\]]*\])+\s*/, '').trim()
@@ -828,7 +836,7 @@
   }
 
   /** groupBadge 按「功能 → 价格」两级重绘；首标签单独加 .lead 作视觉区分。 */
-  function groupBadge(name) {
+  function groupBadge(name, ratio) {
     const t = groupTags(name)
     const tone = { '图片': 'pink', '视频': 'blue', '音频': 'purple', '向量': 'teal', '对话': 'plain' }
     const colorOf = (w) => {
@@ -848,7 +856,11 @@
         class: 'gb-tag lvl2 ' + colorOf(w) + (i === 0 ? ' lead' : ''),
         text: w,
       })),
-      t.rest ? el('span', { class: 'gb-rest', text: t.rest }) : null)
+      t.rest ? el('span', { class: 'gb-rest', text: t.rest }) : null,
+      // 分组倍率：快照 groups 里的数字，原站也把它跟在组名后面
+      Number.isFinite(Number(ratio)) && Number(ratio) > 0
+        ? el('span', { class: 'gb-mul', text: 'x' + String(Number(ratio)).replace(/0+$/, '').replace(/\.$/, '') })
+        : null)
   }
 
   /** 计价条件的有限解析器：仅允许数值/字符串比较、布尔运算及公开用量/时间函数。 */
@@ -1829,7 +1841,8 @@
       svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13')
       svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.9')
       svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
-      for (const d of ['M14 7a4 4 0 1 0-3.5 3.97L4 17.5V20h3l1-1v-2h2v-2l1.03-1.03A4 4 0 0 0 14 7z', 'M16.5 5.5h.01']) {
+      // 站点用的是「圆形钥匙头 + 短柄」：一个圆 + 一条斜柄
+      for (const d of ['M15.5 8.5a4 4 0 1 1-5.66-5.66 4 4 0 0 1 5.66 5.66z', 'M10.6 10.6 4 17.2', 'M4 17.2v3h3', 'M15.2 5.2h.01']) {
         const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p)
       }
       return svg
@@ -1890,11 +1903,22 @@
       }, el('span', { text: logMore ? '收起' : '展开' }), el('span', { class: 'lg-chev single', 'aria-hidden': 'true' }, el('i'))))
 
     // 宿主若给出逐条流水（data.rows），按上游 9 列完整渲染；否则退回按模型汇总。
-    const detailRows = Array.isArray(data?.rows) ? data.rows : null
+    // 逐条流水优先取插件写下的 page/logs.js（宿主代取站点日志）；
+    // 宿主 neartoken:usage 若也给了 rows，则退而用它。
+    const liveLogs = self.NEARTOKEN_LOGS
+    const detailRows = Array.isArray(liveLogs?.rows) && liveLogs.rows.length
+      ? liveLogs.rows
+      : Array.isArray(data?.rows) ? data.rows : null
     const colIdx = { token: 2, model: 3, flow: 4, tokenCount: 5, bytes: 6, cost: 7, time: 8, detail: 9 }
     const hiddenClass = Object.entries(colIdx).filter(([k]) => !logCols.has(k)).map(([, n]) => 'hide-c' + n).join(' ')
     /** 空值横线：用 CSS 画，几何中心与数字中线一致（em dash 的字形墨迹偏低）。 */
     const dash = (cls) => el('span', { class: 'lg-dash' + (cls ? ' ' + cls : ''), 'aria-hidden': 'true' }, el('i'))
+    /** secs 秒数带单位：4.5 → 4.5s，整数也留一位小数。 */
+    const secs = (v) => {
+      const n = Number(v)
+      if (!Number.isFinite(n)) return '—'
+      return n.toFixed(1) + 's'
+    }
     const fmtNum = (n) => {
       const v = Number(n)
       if (!Number.isFinite(v)) return '—'
@@ -2018,28 +2042,41 @@
           el('span', { text: String(r.time || '') }),
           el('span', { class: 'lg-tag ok', text: r.kind || '消耗' })),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-pill' }, keyIcon(), el('span', { text: logPrivate ? '••••' : (r.tokenName || '—') })),
-          r.group ? el('span', { class: 'lg-group' }, groupBadge(r.group)) : null),
+          el('span', {
+            class: 'lg-pill lg-copyable', title: '点击复制令牌名称',
+            onclick: (e) => { e.stopPropagation(); copyModelId(r.tokenName || '', e.currentTarget) },
+          }, keyIcon(), el('span', { text: logPrivate ? '••••' : (r.tokenName || '—') })),
+          r.group ? el('span', { class: 'lg-group' }, groupBadge(r.group, groupRatioOf(r.group))) : null),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-model-row' },
-            el('span', { class: 'lg-model' }, modelIcon(r.model), el('span', { text: r.model || '—' })),
+            el('span', {
+              class: 'lg-model lg-model-tap', title: '点击查看模型映射',
+              onclick: (e) => {
+                e.stopPropagation()
+                if (mapOpen.has(r)) mapOpen.delete(r); else mapOpen.add(r)
+                render()
+              },
+            }, modelIcon(r.model), el('span', { text: r.model || '—' })),
             r.upModel || r.respModel ? el('button', {
               class: 'lg-map' + (mapOpen.has(r) ? ' on' : ''), title: '查看模型映射',
               onclick: (e) => { e.stopPropagation(); if (mapOpen.has(r)) mapOpen.delete(r); else mapOpen.add(r); render() },
             }, mapIcon()) : null),
-          r.effort ? el('span', { class: 'lg-effort', text: r.effort }) : null),
-        mapOpen.has(r) ? el('span', { class: 'lg-map-pop' },
-          [['请求模型', r.model], ['上游请求模型', r.upModel], ['响应模型', r.respModel]].map(([k, v]) =>
-            el('span', { class: 'lg-map-row' }, el('span', { class: 'lg-map-k', text: k }), el('span', { class: 'lg-map-v', text: v || '—' }))) ) : null,
+          r.effort ? el('span', { class: 'lg-effort', text: r.effort }) : null,
+          // 映射面板做成浮层：绝对定位，不占列宽，避免被窄列挤成竖排
+          mapOpen.has(r) ? el('div', { class: 'lg-map-pop' },
+            el('div', { class: 'lg-map-title', text: '模型映射' }),
+            [['请求模型', r.model], ['上游请求模型', r.upModel], ['响应模型', r.respModel]].map(([k, v]) =>
+              el('div', { class: 'lg-map-row' }, el('span', { class: 'lg-map-k', text: k }), el('span', { class: 'lg-map-v', text: v || '—' }))) ) : null),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-flow', text: '流' }),
           el('span', { class: 'lg-sub' }, r.tps ? el('span', { text: r.tps + ' t/s' }) : dash('sm'))),
         el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
         el('span', { class: 'num' }, r.bytes != null ? fmtBytes(r.bytes) : dash()),
-        el('span', { class: 'num', text: logPrivate ? '••••' : (r.cost || '—') }),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (r.cost || '—') })),
         el('span', { class: 'lg-cell-stack lg-time' },
-          el('span', null, '首字 ', r.ttft ? el('b', { text: r.ttft }) : dash('in')),
-          el('span', null, '耗时 ', r.dur ? el('b', { text: r.dur }) : dash('in'))),
+          el('span', null, '首字 ', r.ttft ? el('b', { text: secs(r.ttft) }) : dash('in')),
+          el('span', null, '耗时 ', r.dur ? el('b', { text: secs(r.dur) }) : dash('in'))),
         el('span', { class: 'lg-detail' }, r.detail || dash())))
       return el('section', { class: 'logs' },
         el('h2', { class: 'logs-title', text: '通用日志' }),
@@ -2063,8 +2100,11 @@
           el('span', { class: 'lg-strong', text: fmtDT(range.to).slice(0, 16) }),
           el('span', { class: 'lg-tag ok', text: '消耗' })),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-pill' }, keyIcon(), el('span', { text: logPrivate ? '••••' : (view.tokenName || '—') })),
-          group ? el('span', { class: 'lg-gb' }, groupBadge(group)) : null),
+          el('span', {
+            class: 'lg-pill lg-copyable', title: '点击复制令牌名称',
+            onclick: (e) => { e.stopPropagation(); copyModelId(view.tokenName || '', e.currentTarget) },
+          }, keyIcon(), el('span', { text: logPrivate ? '••••' : (view.tokenName || '—') })),
+          group ? el('span', { class: 'lg-gb' }, groupBadge(group, groupRatioOf(group))) : null),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-pill lg-model-pill', title: m.model }, modelIcon(m.model), el('span', { text: m.model })),
           effort ? el('span', { class: 'lg-effort', text: effort }) : null),
@@ -2204,6 +2244,23 @@
   }
 
   /** 复制模型 ID：优先剪贴板 API，受限时回退 textarea + execCommand，并给按钮即时反馈。 */
+  /** toast 在页面顶部弹一条提示，2 秒后自动消失。 */
+  let toastTimer = null
+  function toast(message, bad = false) {
+    let box = document.getElementById('nt-toast')
+    if (!box) {
+      box = document.createElement('div')
+      box.id = 'nt-toast'
+      document.body.appendChild(box)
+    }
+    box.className = 'nt-toast' + (bad ? ' bad' : '') + ' show'
+    box.replaceChildren(
+      el('span', { class: 'nt-toast-icon', text: bad ? '!' : '✓' }),
+      el('span', { class: 'nt-toast-text', text: message }))
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => { box.classList.remove('show') }, 2000)
+  }
+
   async function copyModelId(text, btn) {
     let ok = false
     try {
@@ -2226,22 +2283,10 @@
         ok = false
       }
     }
-    if (btn) {
-      // 按钮里是 SVG 图标：不能改 textContent（会把图标清掉，看起来像按钮消失了）。
-      // 改成叠加一个临时对勾徽标，并把图标临时压暗，定时复原。
-      btn.title = (ok ? '已复制 ' : '复制失败，请手动复制 ') + text
-      btn.classList.toggle('copied', ok)
-      btn.classList.toggle('copyfail', !ok)
-      const badge = document.createElement('span')
-      badge.className = 'copy-badge'
-      badge.textContent = ok ? '✓' : '!'
-      btn.appendChild(badge)
-      clearTimeout(btn.__copyTimer)
-      btn.__copyTimer = setTimeout(() => {
-        badge.remove()
-        btn.classList.remove('copied', 'copyfail')
-      }, 900)
-    }
+    if (ok) toast('已复制到剪贴板')
+    else toast('复制失败，请手动复制', true)
+    // 反馈统一走页面顶部 toast，按钮本身不叠加任何徽标或变色
+    if (btn) btn.title = (ok ? '已复制 ' : '复制失败，请手动复制 ') + text
     return ok
   }
 

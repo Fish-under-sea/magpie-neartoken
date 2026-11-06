@@ -546,6 +546,110 @@ async function fetchAff() {
 }
 
 /**
+ * writeLogs 把逐条日志写成 page/logs.js。
+ * 页面沙箱 connect-src 为 none，只能靠加载这个脚本读实时流水。
+ */
+function writeLogs(rows) {
+  try {
+    writeFileSync(
+      join(here, 'page', 'logs.js'),
+      '// 由插件运行时从站点日志接口写入\nself.NEARTOKEN_LOGS = ' + JSON.stringify({ at: Date.now(), rows }) + '\n',
+      'utf8',
+    )
+  } catch { /* 只读安装就跳过 */ }
+}
+
+/** num 把站点可能给的字符串数字转成数字。 */
+function num(v) {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+/** 从一条站点日志里取「首字耗时」：new-api 放在 other.frt，单位毫秒。 */
+function firstToken(rec) {
+  let other = rec?.other
+  if (typeof other === 'string') {
+    try { other = JSON.parse(other) } catch { other = null }
+  }
+  const frt = num(other?.frt) ?? num(other?.first_response_time)
+  return frt === undefined ? undefined : Math.round(frt) / 1000
+}
+
+/**
+ * fetchLogs 拉站点逐条日志，归一化成页面要的形状写进 page/logs.js。
+ * 优先 /api/log/token（按 API key 查，插件正好有这把钥匙）；
+ * 站点若只给 /api/log/self（需要登录会话），这里会自动退回。
+ */
+/** quotaPerUnit 站点每 1 美元对应的额度；实测 /api/status 给 500000。 */
+let quotaPerUnit = 500000
+async function readQuotaPerUnit() {
+  try {
+    const env = await call('/api/status')
+    const d = env?.data ?? env
+    const v = num(d?.quota_per_unit)
+    if (v && v > 0) quotaPerUnit = v
+  } catch { /* 拿不到就用默认 500000 */ }
+}
+
+async function fetchLogs() {
+  if (!authGetter) return
+  try {
+    const auth = await authGetter()
+    const key = auth?.access || auth?.key || ''
+    if (!key) return
+    await readQuotaPerUnit()
+    let list = null
+    for (const path of ['/api/log/token?p=0&page_size=100', '/api/log/self?p=0&page_size=100']) {
+      try {
+        const env = await call(path, { key })
+        const d = env?.data
+        const items = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : Array.isArray(d?.data) ? d.data : null
+        if (items && items.length) { list = items; break }
+      } catch { /* 换下一个端点 */ }
+    }
+    if (!list) return
+    const rows = list.map((r) => {
+      const other = (() => {
+        let o = r?.other
+        if (typeof o === 'string') { try { return JSON.parse(o) } catch { return null } }
+        return o || null
+      })()
+      const t = num(r?.created_at) || num(r?.createdAt) || 0
+      const when = t ? new Date(t * 1000) : null
+      const fmt = (d) => d ? d.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-') : ''
+      const prompt = num(r?.prompt_tokens) ?? num(r?.promptTokens)
+      const completion = num(r?.completion_tokens) ?? num(r?.completionTokens)
+      const secs = num(r?.use_time) ?? num(r?.useTime)
+      const quota = num(r?.quota)
+      return {
+        time: when ? fmt(when).slice(0, 16) : '',
+        kind: '消耗',
+        tokenName: r?.token_name || r?.tokenName || '',
+        group: r?.group || other?.group || '',
+        model: r?.model_name || r?.modelName || '',
+        upModel: other?.upstream_model || other?.up_model || '',
+        respModel: other?.response_model || '',
+        effort: other?.reasoning_effort || '',
+        tps: completion && secs ? Math.round(completion / secs) : undefined,
+        input: prompt,
+        output: completion,
+        cache: num(r?.cache_tokens) ?? num(other?.cache_tokens),
+        bytes: num(r?.request_size) ?? num(other?.request_size) ?? num(other?.req_size),
+        quota,
+        // 费用 = 额度 / 每美元额度；站点是 ¥ 计价且汇率 1，故直接按 ¥ 显示
+        cost: quota === undefined ? '' : '¥' + (quota / quotaPerUnit).toFixed(6),
+        ttft: firstToken(r),
+        dur: secs,
+        detail: [other?.billing_mode, other?.group_ratio ? '×' + other.group_ratio : '', other?.model_ratio ? 'model ×' + other.model_ratio : '']
+          .filter(Boolean).join(' · '),
+        isStream: r?.is_stream ?? r?.isStream,
+      }
+    }).reverse()
+    writeLogs(rows)
+  } catch { /* 拿不到就保持上次的流水 */ }
+}
+
+/**
  * scheduleCatalogSync 后台定时刷新目录快照与邀请数据，一个进程只起一个定时器。
  * 拉全量（不带禁用参数）写 page/pricing.js，禁用状态由页面自己管。
  */
@@ -555,6 +659,7 @@ function scheduleCatalogSync() {
   const tick = () => {
     catalog(new Set(), new Set()).catch(() => {})
     fetchAff().catch(() => {})
+    fetchLogs().catch(() => {})
   }
   tick()
   catalogTimer = setInterval(tick, 5 * 60 * 1000)
@@ -604,6 +709,19 @@ export default async function neartoken(input, options) {
   // 页面每分钟重载该文件——模型清单与分组就跟着站点实时同步。
   scheduleCatalogSync()
   return {
+    /**
+     * config 声明 provider 的对外显示名。
+     * 宿主列表里显示 @NearToken，点进详情显示 npm 包名 @fish-under-sea/magpie-neartoken。
+     */
+    async config(cfg) {
+      cfg.provider ??= {}
+      cfg.provider[PROVIDER_ID] ??= {}
+      const p = cfg.provider[PROVIDER_ID]
+      p.name = 'NearToken'
+      p.npm ??= '@ai-sdk/openai-compatible'
+      p.api ??= SITE + '/v1'
+      p.models ??= {}
+    },
     auth: {
       provider: PROVIDER_ID,
       ...(ICON ? { icon: ICON } : {}),

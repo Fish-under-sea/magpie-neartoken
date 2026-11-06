@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.6.18**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**0.6.19**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.18.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.19.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,23 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 0.6.19 插件显示名 · 真实逐条日志 · 费用精确
+
+插件身份：
+
+- 新增 `config` 钩子声明 provider 显示名，列表里显示 `@NearToken`，点进详情显示 npm 包名 `@fish-under-sea/magpie-neartoken`。
+
+使用日志（关键：不再只有 1 条聚合）：
+
+- **宿主代取站点逐条流水**：新增 `fetchLogs()`，用插件钥匙请求 `/api/log/token`（失败兜底 `/api/log/self`），归一化后写入 `page/logs.js`，随目录同步每 5 分钟一次；页面加载该脚本并**优先使用它的 `rows`**，宿主 `neartoken:usage` 的 `rows` 作为次选。
+- **费用精确**：不再写死 500000，改为从 `/api/status` 读取真实 `quota_per_unit`（实测该站 500000），费用 = `quota / quota_per_unit`，显示到 6 位小数。
+- **分组倍率**：从快照 `groups` 取倍率并跟在分组徽标后（如 `低价 DeepSeek x0.4`）。
+- **令牌胶囊可点击复制**，复制结果用页面顶部 toast 提示（2 秒淡出），按钮本身不再叠加对勾徽标。
+- **模型映射浮层**：点模型名或右侧连线图标即可展开「请求模型 / 上游请求模型 / 响应模型」；修正 `overflow: hidden` 导致的裁剪，浮层真正浮在内容之上且不撑高行高。
+- **费用胶囊**：逐条行的费用改为胶囊并与首行同一基线（实测与 Token 列中线一致）。
+- **耗时单位**：`首字 / 耗时` 补上 `s`。
+- 令牌图标换成站点那种「圆形钥匙头 + 短柄」。
 
 ## 0.6.18 模型广场表格列表 · 全站胶囊化 · 代金券与充值区对齐
 
