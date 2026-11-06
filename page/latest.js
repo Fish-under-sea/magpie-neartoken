@@ -1,2 +1,2 @@
-self.NEARTOKEN_LATEST = "1.0.1"
-self.NEARTOKEN_LATEST_AT = 1793976436343
+// 由插件在拉取目录时覆盖写入；这里只是占位。
+self.NEARTOKEN_LATEST = self.NEARTOKEN_LATEST || ''
