@@ -1251,3 +1251,6 @@
 .logs .lg-row > .lg-cell-stack > span { min-width: 0; }
 .logs .lg-row > .lg-cell-stack .lg-model,
 .logs .lg-row > .lg-cell-stack .lg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 非流式：蓝色改灰，和上游一致 */
+.logs .lg-flow.off { color: var(--nt-muted); }

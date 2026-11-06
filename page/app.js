@@ -1442,9 +1442,19 @@
   async function initDisabledByGroup() {
     let stored = null
     try {
-      const viaHost = await bridge.call('neartoken:prefs', { get: true })
-      if (viaHost && typeof viaHost === 'object' && viaHost.disabledByGroup && typeof viaHost.disabledByGroup === 'object') {
-        stored = viaHost.disabledByGroup
+      const viaHost = await bridge.call('neartoken:prefs', { op: 'get' })
+      if (viaHost && typeof viaHost === 'object') {
+        if (Array.isArray(viaHost.disabled)) {
+          // 宿主契约：{disabled:[{model, groups}]} → Map 形状
+          const map = {}
+          for (const item of viaHost.disabled) {
+            if (!item || typeof item.model !== 'string') continue
+            if (Array.isArray(item.groups) && item.groups.length) map[item.model] = item.groups.map(String)
+          }
+          if (Object.keys(map).length) stored = map
+        } else if (viaHost.disabledByGroup && typeof viaHost.disabledByGroup === 'object') {
+          stored = viaHost.disabledByGroup
+        }
       }
     } catch { /* 宿主还没这个调用 */ }
     if (!stored) {
@@ -1956,6 +1966,11 @@
       el('button', { class: 'lg-btn icon-btn', title: '下一页', disabled: logPage >= pageCount(totalCount), onclick: () => { if (logPage < pageCount(totalCount)) { logPage += 1; render() } } }, '›'),
       el('button', { class: 'lg-btn icon-btn', title: '最后一页', disabled: logPage >= pageCount(totalCount), onclick: () => { logPage = pageCount(totalCount); render() } }, '»'))
 
+    // 有逐条数据源但当前窗口为空：明确说明，而不是回落到聚合视图
+    const hasLiveSource = !!liveLogs && Array.isArray(liveLogs.rows)
+    const liveEmpty = hasLiveSource && liveLogs.rows.length === 0
+    const emptyNote = liveEmpty ? '这个窗口没有逐条记录。' : null
+
     const all = (data?.models || []).slice().sort((a, b) => b.tokens - a.tokens)
     const total = all.reduce((sum, m) => sum + m.tokens, 0) || 1
     const q = logQuery.trim().toLowerCase()
@@ -2034,6 +2049,17 @@
         el('p', { class: 'note warn', text: data.reason === 'unreachable' ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' }))
     }
 
+    if (liveEmpty) {
+      return el('section', { class: 'logs' },
+        el('h2', { class: 'logs-title', text: '通用日志' }),
+        el('div', { class: 'logs-panel' },
+          toolbar, moreRow, statbar,
+          el('div', { class: 'lg-table-wrap' },
+            el('p', { class: 'lg-empty', text: emptyNote })),
+          pagerBar(0)),
+        el('p', { class: 'note', text: '插件已连上站点日志接口，当前时间窗口没有记录。' }))
+    }
+
     if (detailRows && detailRows.length) {
       const colsD = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
       const pageRowsD = pageSlice(detailRows)
@@ -2068,9 +2094,13 @@
             [['请求模型', r.model], ['上游请求模型', r.upModel], ['响应模型', r.respModel]].map(([k, v]) =>
               el('div', { class: 'lg-map-row' }, el('span', { class: 'lg-map-k', text: k }), el('span', { class: 'lg-map-v', text: v || '—' }))) ) : null),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-flow', text: '流' }),
+          el('span', { class: 'lg-flow' + (r.isStream === false ? ' off' : ''), text: r.isStream === false ? '非流' : '流' }),
           el('span', { class: 'lg-sub' }, r.tps ? el('span', { text: r.tps + ' t/s' }) : dash('sm'))),
-        el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
+          r.cache != null && Number(r.cache) > 0
+            ? el('span', { class: 'lg-sub', text: '缓存 ' + fmtNum(r.cache) })
+            : null),
         el('span', { class: 'num' }, r.bytes != null ? fmtBytes(r.bytes) : dash()),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (r.cost || '—') })),
@@ -2189,11 +2219,27 @@
   let saveTimer = null
   let sending = false
   let sendAgain = false
+  /** 分组收起 / 置顶：宿主契约里的 hiddenGroups 与 pinned。 */
+  function hiddenGroupsOf() {
+    const out = []
+    for (const [key, open] of asideOpen) if (key === 'group' || open === false) out.push(key)
+    return out.filter((k) => k === 'group' && asideOpen.get('group') === false)
+  }
+  function pinnedOf() {
+    return marketGroup ? [marketGroup] : []
+  }
+
   async function flushDisabled() {
     const plain = Object.fromEntries([...disabledByGroup].map(([k, v]) => [k, [...v]]))
     // 先走宿主偏好文件调用：写文件不会重建插件宿主，供应商不会因此掉。
     try {
-      const r = await bridge.call('neartoken:prefs', { set: plain })
+      // 与宿主契约一致：{op:'set', disabled:[{model, groups}]}
+      const r = await bridge.call('neartoken:prefs', {
+        op: 'set',
+        disabled: [...disabledByGroup].map(([model, groups]) => ({ model, groups: [...groups] })),
+        hiddenGroups: hiddenGroupsOf(),
+        pinned: pinnedOf(),
+      })
       if (r && r.ok) { lastError = ''; return }
     } catch { /* 宿主还没这个调用，落到本机存储 */ }
     try {

@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**1.0.0**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**1.0.1**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.0.0.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.0.1.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,20 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 1.0.1 宿主契约补齐
+
+对照宿主侧的清单，把插件侧该补的都补了：
+
+- **`magpie.calls` 加 `"neartoken:prefs"`**：现在共 9 条。
+- **prefs 协议对齐**：读用 `{op:'get'}`，写用 `{op:'set', disabled:[{model,groups}], hiddenGroups:[], pinned:[]}`；读回同时兼容 `{disabled:[...]}` 与旧版 `{disabledByGroup:{...}}`。
+- **分组收起 / 置顶**：`hiddenGroups` 与 `pinned` 一并写进 prefs 载荷。
+- **空态文案**：有逐条数据源但当前窗口为空时显示「这个窗口没有逐条记录。」，不再回落聚合视图。
+- **`magpie.min = "2.2.2"`**：声明宿主能力门槛（`prefs` 通道与 `usage.rows` 从该版本起提供）。
+- **缓存 token**：Token 列下方显示 `缓存 27,520`。
+- **流式标记**：非流式显示灰色「非流」，流式显示蓝色「流」。
+
+交接文档见 [HANDOFF-插件契约补齐.md](./HANDOFF-插件契约补齐.md)（随仓库提供，不含在 npm 运行包中）。
 
 ## 1.0.0 首个正式版
 
