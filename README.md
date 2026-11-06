@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.7.0**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**1.0.0**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.7.0.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.0.0.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,18 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 1.0.0 首个正式版
+
+功能与 0.7.0 一致，里程碑意义在于：核心能力已经稳定并各自有实测依据。
+
+- **供应商与模型**：每模型一行、按分组路由、请求自补 `x-neartoken-group`，供应商不再掉出。
+- **模型广场**：表格列表（模型/类型/价格/缓存/供应商/端点/分组）、价格两位小数约分、端点与分组单行 `+N` 截断、供应商两列与固定优先级、状态胶囊、列切换。
+- **使用日志**：宿主代取站点逐条流水写 `page/logs.js`，费用按真实 `quota_per_unit` 换算，吞吐按「输出 /(总时长 − 首字)」，时间补零，最新在最上，映射浮层。
+- **账户页**：余额、代金券（总额 + 分组徽标）、充值档位、邀请计划。
+- **页面与宿主**：`config` 声明显示名 `@NearToken`、自动热重载、全站胶囊化。
+
+README 补了上游署名：magpie（yetone）、OpenCode（SST）、new-api（Calcium-Ion）、Vercel AI SDK 与 NearToken 站方。
 
 ## 0.7.0 日志数据修正（吞吐 · 排序 · 时间 · 字段解包）
 
