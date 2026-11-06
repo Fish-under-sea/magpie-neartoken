@@ -107,6 +107,29 @@
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
 
+## 1.1.7 删掉自动检查更新与热重载
+
+插件以前会每分钟向 npm registry 问一次最新版本，写进 `page/latest.js`，页面再比对并自动重载。这套东西有两个问题：
+
+- **多余的网络请求**：插件运行时每隔一分钟打一次 `registry.npmjs.org`，与「少去打扰外部服务」的方向相反；
+- **重复了宿主的职责**：magpie 自己就有插件更新检查（`plugin-updates.json`），版本号显示也由 `page/version.js` 提供，插件不需要再造一份。
+
+现在删除：
+
+| 位置 | 删掉的东西 |
+| --- | --- |
+| `index.mjs` | `stampLatest()`、`latestAskedAt`、两处调用（`usage` 与 `models` 钩子里） |
+| `page/app.js` | 整块「检查更新」：`cmpVersion`、`loadLatest`、`autoHotReload`、`startHotReload` 及其调用 |
+| `page/latest.js` | 整个文件 |
+| `page/index.html` | `#update-note` 提示元素 |
+| `page/style.css` | `.update-note` 三条样式 |
+
+**保留**：头部版本号胶囊 `#version`、`page/version.js`（由 `scripts/stamp.mjs` 按 `package.json` 生成），以及 `boot()` 里填充版本号的逻辑。
+
+### 注意
+
+这条改动与「供应商偶发掉出」**无关**，不要混为一谈：掉出是宿主在插件重载窗口里把 provider 判成「用户已移除」，已开宿主 issue `FISH-DOCK-Plugins#41`（provider sticky）跟踪。
+
 ## 1.1.6 五分钟掉一次供应商的成因与防护
 
 ### 宿主那 5 分钟是怎么来的
