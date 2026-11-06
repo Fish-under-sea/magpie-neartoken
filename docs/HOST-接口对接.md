@@ -150,11 +150,37 @@
 | `page/logs.js` | 插件 `writeLogs` | 页面日志 | 逐条流水（`/api/log/token`） |
 | `page/prefs.json` | **宿主**镜像（补丁 `pagePrefsName`） | 无 | 页面不读，仅供排查 |
 
-## 八、宿主仍需确认的事项（不阻塞插件发布）
+### 七.1 两点补充说明
 
 1. **prefs 镜像形状**：宿主镜像 `prefs.json`，页面沙箱不能读文件。页面已不依赖它，建议宿主保持现状或删除镜像，二选一。
-2. **`pluginOwnsProvider()` 判定**：只看 `plugin.Listed()`（`plugin-providers.json`）与 `plugin.Cached()`。插件未列入时，宿主会回退到自己的 key+URL 供应商。需宿主在真机复现「列表掉出」时，记录两份快照的内容。
-3. **`plugin-providers.json` 现状**：本机 `C:\Users\Fish\.fish-dock\.fishplugin-magpie\credentials\magpie\plugin-providers.json` 中**不含 neartoken 条目**（2026-10-27 写入，已过期）。需要宿主在新版本下重新列举后才能判断。
+2. **`pluginOwnsProvider()` 判定**：只看 `plugin.Listed()`（`plugin-providers.json`）与 `plugin.Cached()`。插件未列入时，宿主会回退到自己的 key+URL 供应商。
+
+> 更正：早前根据 `credentials\magpie\plugin-providers.json`（2026-10-27 的旧数据根）判断「没有 neartoken 条目」，该结论**不成立**。真实数据根是 `credentials\magpie-runtime\data`，其中 neartoken 条目存在且 `models=109`，见第八节。
+
+## 八、实测：掉出的真实原因（2026-11-07）
+
+在真实数据根 `C:\Users\Fish\.fish-dock\.fishplugin-magpie\credentials\magpie-runtime\data` 上实测：
+
+| 项 | 实测值 |
+| --- | --- |
+| 已装插件 | `@fish-under-sea/magpie-neartoken`（`data/plugins/package.json`） |
+| 运行时是否含 prefs | 含：二进制里有 `neartoken:prefs`、`neartoken-prefs.json`、`hiddenGroups`、`pluginOwnsProvider`，且带 `fish.23` 标记 |
+| `neartoken-prefs.json` | 存在，停用 **109** 条（全部带 `groups`） |
+| 站点目录模型数 | 109 |
+| 停用后仍启用 | **0** |
+| `plugin-providers.json` 的 neartoken | 存在，`models=109` |
+
+结论：**prefs 通道没问题，缺口是语义**。
+
+- 宿主 `pluginCatalog` → `modelFilter` → `LoadPrefs().ModelIDs()`，把 `disabled` 里的模型整个剔除；
+- `disabled` 覆盖 109/109 时，过滤结果是空表，供应商即表现为掉出；
+- 宿主模型清单没有分组维度，而页面启停原本是分组级，于是「关掉一个组」被放大成「整个模型下线」。
+
+插件侧已按此修正（1.1.1）：只把「所有分组都停用」的模型写进 `disabled`，分组明细只留本机；「全不选」只作用于当前视图分组。
+
+### 宿主侧仍可考虑的一处能力（非阻塞）
+
+若希望「按分组停用」在 magpie 的模型清单里也精确生效，需要宿主让 `ModelIDs()` 尊重 `PrefModel.Groups`：只有某模型被停用的分组覆盖它**全部**分组时才隐藏该模型，否则保留（由插件按剩余分组路由）。当前实现忽略 `groups`，等价于「只要出现就整模型隐藏」。插件已用上面的写入口径规避该差异，不依赖这条改动。
 
 ## 九、验收口径
 
