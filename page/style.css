@@ -159,36 +159,14 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-/* 代金券：真做成券的样子——票根、虚线、分组名。只这一处用造型。 */
-.vouchers { display: grid; gap: 8px; }
+/* 代金券：票根造型已退役，改用 market.css 里的胶囊样式（无竖条、无虚线）。 */
+.vouchers { display: grid; gap: 6px; }
 
 .label { margin: 16px 0 8px; font-size: 11px; color: var(--nt-muted); }
 
 /* 充值区：档位一行、渠道与按钮一行，间距固定，不靠 margin 叠 */
 .topup { display: flex; flex-direction: column; gap: 10px; }
 .topup > .row { min-height: 32px; }
-
-.voucher {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px 9px 14px;
-  border: 1px dashed var(--nt-line);
-  border-radius: 10px;
-  background: transparent;
-}
-
-.voucher::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--nt-amber);
-}
 
 .voucher .who {
   flex: 1;

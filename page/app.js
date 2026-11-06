@@ -429,7 +429,8 @@
         el('span', { class: 'vt-v', text: unit + totalNum.toFixed(2) })))
       parts.push(el('div', { class: 'vouchers' }, vouchers.map((v) =>
         el('div', { class: 'voucher' },
-          el('span', { class: 'who' }, groupBadge(String(v.group || '')), el('span', { class: 'vname', text: groupNameOnly(String(v.group || '')) })),
+          // groupBadge 已经渲染出「标签 + 组名本体」，外面不再重复拼组名
+          el('span', { class: 'who' }, groupBadge(String(v.group || ''))),
           el('span', { class: 'amt', text: v.amount })))))
     } else {
       parts.push(el('p', { class: 'note', text: '没有可用代金券。站点的邀请计划会发分组券。' }))
@@ -655,7 +656,7 @@
   let logInterval = 10
   let logAutoTimer = null
   /** 日志列是否显示。 */
-  const LOG_COLS = [['token', '令牌'], ['model', '模型'], ['flow', '流'], ['tokenCount', 'Token'], ['bytes', '请求体大小'], ['cost', '费用'], ['time', '耗时'], ['detail', '详情']]
+  const LOG_COLS = [['group', '分组'], ['model', '模型'], ['cost', '费用'], ['bytes', '请求体大小'], ['flow', '流'], ['tokenCount', 'Token'], ['time', '耗时'], ['detail', '详情']]
   let logCols = new Set(LOG_COLS.map(([k]) => k))
   /** 日志类型（对齐原站下拉）。 */
   const LOG_KINDS = [['all', '所有类型'], ['topup', '充值'], ['consume', '消耗'], ['manage', '管理', '已弃用'], ['system', '系统'], ['error', '错误'], ['refund', '退款'], ['login', '登录', '已弃用']]
@@ -1931,10 +1932,14 @@
       const ns = 'http://www.w3.org/2000/svg'
       const svg = document.createElementNS(ns, 'svg')
       svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13')
-      svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.9')
+      svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8')
       svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
-      // 站点用的是「圆形钥匙头 + 短柄」：一个圆 + 一条斜柄
-      for (const d of ['M15.5 8.5a4 4 0 1 1-5.66-5.66 4 4 0 0 1 5.66 5.66z', 'M10.6 10.6 4 17.2', 'M4 17.2v3h3', 'M15.2 5.2h.01']) {
+      svg.setAttribute('aria-hidden', 'true')
+      // 经典钥匙：左下圆头 + 斜柄 + 右上一长一短两齿
+      const head = document.createElementNS(ns, 'circle')
+      head.setAttribute('cx', '7.5'); head.setAttribute('cy', '15.5'); head.setAttribute('r', '4.5')
+      svg.appendChild(head)
+      for (const d of ['M11.2 11.8 20.5 2.5', 'M15.5 7.5l2.6 2.6L21 7.2l-2.6-2.6']) {
         const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p)
       }
       return svg
@@ -2001,7 +2006,7 @@
     const detailRows = Array.isArray(liveLogs?.rows) && liveLogs.rows.length
       ? liveLogs.rows
       : Array.isArray(data?.rows) ? data.rows : null
-    const colIdx = { token: 2, model: 3, flow: 4, tokenCount: 5, bytes: 6, cost: 7, time: 8, detail: 9 }
+    const colIdx = { group: 2, model: 3, cost: 4, bytes: 5, flow: 6, tokenCount: 7, time: 8, detail: 9 }
     const hiddenClass = Object.entries(colIdx).filter(([k]) => !logCols.has(k)).map(([, n]) => 'hide-c' + n).join(' ')
     /** 空值横线：用 CSS 画，几何中心与数字中线一致（em dash 的字形墨迹偏低）。 */
     const dash = (cls) => el('span', { class: 'lg-dash' + (cls ? ' ' + cls : ''), 'aria-hidden': 'true' }, el('i'))
@@ -2010,6 +2015,19 @@
       const n = Number(v)
       if (!Number.isFinite(n)) return '—'
       return n.toFixed(1) + 's'
+    }
+    /**
+     * tierClass 按总耗时给竖条分档：绿（快）/ 橙黄（中等）/ 红（慢）。
+     *
+     * 阈值：<5s 绿、5–15s 橙黄、≥15s 红。原站日志组件是懒加载 chunk，
+     * 主包里只有文案没有阈值常量，这组数字是按可见设计定的；要改只改这里。
+     */
+    const tierClass = (v) => {
+      const n = Number(v)
+      if (!Number.isFinite(n) || n <= 0) return 'lg-dur-none'
+      if (n < 5) return 'lg-dur-fast'
+      if (n < 15) return 'lg-dur-mid'
+      return 'lg-dur-slow'
     }
     const fmtNum = (n) => {
       const v = Number(n)
@@ -2142,20 +2160,25 @@
     }
 
     if (detailRows && detailRows.length) {
-      const colsD = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
+      // 列序：时间（含消耗 + 令牌）→ 分组 → 模型 → 费用 → 请求体大小 → 流 → Token → 耗时 → 详情
+      const colsD = ['时间', '分组', '模型', '费用', '请求体大小', '流', 'Token', '耗时', '详情']
       const pageRowsD = pageSlice(detailRows)
       const body = pageRowsD.map((r) => el('div', { class: 'lg-row' },
+        // 第一格：时间 + 「消耗」类型 + 令牌胶囊（令牌跟着消耗走，不再单独占一列）
         el('span', { class: 'lg-cell-stack' },
           el('span', { text: String(r.time || '') }),
-          el('span', { class: 'lg-tag ok', text: r.kind || '消耗' })),
+          el('span', { class: 'lg-meta-row' },
+            el('span', { class: 'lg-tag ok', text: r.kind || '消费' }),
+            el('span', {
+              class: 'lg-pill lg-copyable', title: '点击复制令牌名称',
+              onclick: (e) => { e.stopPropagation(); copyModelId(r.tokenName || '', e.currentTarget) },
+            }, keyIcon(), el('span', { text: logPrivate ? '••••' : (r.tokenName || '—') })))),
+        // 分组：模型所属站点分组（含倍率）
+        el('span', { class: 'lg-group-cell' },
+          r.group ? el('span', { class: 'lg-gb', title: r.group }, groupBadge(r.group, groupRatioOf(r.group))) : dash()),
+        // 模型 + 思考强度：同一行，模型在前
         el('span', { class: 'lg-cell-stack' },
-          el('span', {
-            class: 'lg-pill lg-copyable', title: '点击复制令牌名称',
-            onclick: (e) => { e.stopPropagation(); copyModelId(r.tokenName || '', e.currentTarget) },
-          }, keyIcon(), el('span', { text: logPrivate ? '••••' : (r.tokenName || '—') })),
-          r.group ? el('span', { class: 'lg-group' }, groupBadge(r.group, groupRatioOf(r.group))) : null),
-        el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-model-row' },
+          el('span', { class: 'lg-model-inline' },
             el('span', {
               class: 'lg-model lg-model-tap', title: '点击查看模型映射',
               onclick: (e) => {
@@ -2164,31 +2187,32 @@
                 render()
               },
             }, modelIcon(r.model), el('span', { text: r.model || '—' })),
+            r.effort ? el('span', { class: 'lg-effort', text: r.effort }) : null,
             r.upModel || r.respModel ? el('button', {
               class: 'lg-map' + (mapOpen.has(r) ? ' on' : ''), title: '查看模型映射',
               onclick: (e) => { e.stopPropagation(); if (mapOpen.has(r)) mapOpen.delete(r); else mapOpen.add(r); render() },
             }, mapIcon()) : null),
-          r.effort ? el('span', { class: 'lg-effort', text: r.effort }) : null,
           // 映射面板做成浮层：绝对定位，不占列宽，避免被窄列挤成竖排
           mapOpen.has(r) ? el('div', { class: 'lg-map-pop' },
             el('div', { class: 'lg-map-title', text: '模型映射' }),
             [['请求模型', r.model], ['上游请求模型', r.upModel], ['响应模型', r.respModel]].map(([k, v]) =>
               el('div', { class: 'lg-map-row' }, el('span', { class: 'lg-map-k', text: k }), el('span', { class: 'lg-map-v', text: v || '—' }))) ) : null),
         el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (r.cost || '—') })),
+        el('span', { class: 'num' }, r.bytes != null ? fmtBytes(r.bytes) : dash()),
+        el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-flow' + (r.isStream === false ? ' off' : ''), text: r.isStream === false ? '非流' : '流' }),
           el('span', { class: 'lg-sub' }, r.tps ? el('span', { text: r.tps + ' t/s' }) : dash('sm'))),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
-          r.cache != null && Number(r.cache) > 0
-            ? el('span', { class: 'lg-sub', text: '缓存 ' + fmtNum(r.cache) })
-            : null),
-        el('span', { class: 'num' }, r.bytes != null ? fmtBytes(r.bytes) : dash()),
-        el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (r.cost || '—') })),
+          // 没命中缓存也要显式写 0，不留空——空值会被读成「这一列没数据」
+          el('span', { class: 'lg-sub', text: '缓存 ' + fmtNum(Number(r.cache) || 0) })),
         el('span', { class: 'lg-cell-stack lg-time' },
-          el('span', null, '首字 ', r.ttft ? el('b', { text: secs(r.ttft) }) : dash('in')),
-          el('span', null, '耗时 ', r.dur ? el('b', { text: secs(r.dur) }) : dash('in'))),
-        el('span', { class: 'lg-detail' }, r.detail || dash())))
+          // 首字与耗时各自按自己的秒数分档：首字快、总耗时慢时能同时看出两件事
+          el('span', { class: 'lg-dur ' + tierClass(r.ttft) }, '首字 ', r.ttft ? el('b', { text: secs(r.ttft) }) : dash('in')),
+          el('span', { class: 'lg-dur ' + tierClass(r.dur) }, '耗时 ', r.dur ? el('b', { text: secs(r.dur) }) : dash('in'))),
+        // 详情：站点真实字段拼出的计价条件（档位 · 单价），空则横线
+        el('span', { class: 'lg-detail', title: r.detail || '' }, r.detail || dash())))
       return el('section', { class: 'logs' },
         el('h2', { class: 'logs-title', text: '通用日志' }),
         el('div', { class: 'logs-panel' },
@@ -2199,7 +2223,7 @@
         el('p', { class: 'note', text: '数据来自站点逐条日志。' }))
     }
 
-    const cols = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
+    const cols = ['时间', '分组', '模型', '费用', '请求体大小', '流', 'Token', '耗时', '详情']
     const table = el('div', { class: 'lg-table ' + hiddenClass },
       el('div', { class: 'lg-row head' }, cols.map((c) => el('span', { text: c }))),
       pageSlice(rows).length ? pageSlice(rows).map((m) => {
@@ -2207,29 +2231,35 @@
         const group = snap ? cheapestGroup(snap) : ''
         const effort = snap && marketKindOf(snap) === 'chat' ? 'High' : ''
         return el('div', { class: 'lg-row' },
+        // 第一格：时间 + 「消费」类型 + 令牌胶囊
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-strong', text: fmtDT(range.to).slice(0, 16) }),
-          el('span', { class: 'lg-tag ok', text: '消耗' })),
+          el('span', { class: 'lg-meta-row' },
+            el('span', { class: 'lg-tag ok', text: '消费' }),
+            el('span', {
+              class: 'lg-pill lg-copyable', title: '点击复制令牌名称',
+              onclick: (e) => { e.stopPropagation(); copyModelId(view.tokenName || '', e.currentTarget) },
+            }, keyIcon(), el('span', { text: logPrivate ? '••••' : (view.tokenName || '—') })))),
+        // 分组：模型所属站点分组（含倍率）
+        el('span', { class: 'lg-group-cell' },
+          group ? el('span', { class: 'lg-gb', title: group }, groupBadge(group, groupRatioOf(group))) : dash()),
+        // 模型 + 思考强度：同一行，模型在前
         el('span', { class: 'lg-cell-stack' },
-          el('span', {
-            class: 'lg-pill lg-copyable', title: '点击复制令牌名称',
-            onclick: (e) => { e.stopPropagation(); copyModelId(view.tokenName || '', e.currentTarget) },
-          }, keyIcon(), el('span', { text: logPrivate ? '••••' : (view.tokenName || '—') })),
-          group ? el('span', { class: 'lg-gb' }, groupBadge(group, groupRatioOf(group))) : null),
+          el('span', { class: 'lg-model-inline' },
+            el('span', { class: 'lg-pill lg-model-pill', title: m.model }, modelIcon(m.model), el('span', { text: m.model })),
+            effort ? el('span', { class: 'lg-effort', text: effort }) : null)),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-pill lg-model-pill', title: m.model }, modelIcon(m.model), el('span', { text: m.model })),
-          effort ? el('span', { class: 'lg-effort', text: effort }) : null),
+          el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (m.costText || '—') })),
+        el('span', { class: 'lg-strong num' }, dash()),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-flow', text: '流' }),
           el('span', { class: 'lg-sub' }, dash('sm'))),
         el('span', { class: 'lg-strong num', text: fmtNum(m.tokens) }),
-        el('span', { class: 'lg-strong num' }, dash()),
-        el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (m.costText || '—') })),
         el('span', { class: 'lg-cell-stack lg-time' },
-          el('span', { class: 'lg-bar-green' }, '首字 ', dash('in')),
-          el('span', { class: 'lg-bar-green' }, '耗时 ', dash('in'))),
-        el('span', { class: 'lg-detail' }, dash()))
+          el('span', { class: 'lg-dur lg-dur-none' }, '首字 ', dash('in')),
+          el('span', { class: 'lg-dur lg-dur-none' }, '耗时 ', dash('in'))),
+        // 聚合视图没有逐条计价条件：额度与模型倍率能说的就这些
+        el('span', { class: 'lg-detail', title: m.model }, snap ? detailTextOf(snap) : dash()))
       })
         : el('div', { class: 'lg-empty', text: '这个筛选下没有记录。' }))
 

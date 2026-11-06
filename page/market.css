@@ -588,7 +588,7 @@
 
 /* 全胶囊：搜索框、展开；表格行按原站复刻 */
 .lg-input { border-radius: 999px; padding: 0 14px; height: 36px; }
-.lg-row { grid-template-columns: 1.35fr 1.6fr 1.95fr .8fr 1fr .95fr .95fr 1.05fr .8fr; padding: 16px 14px; align-items: start; }
+.lg-row { grid-template-columns: 1.3fr 2.0fr 1.55fr .75fr 1.15fr 1.0fr 1.0fr 1.05fr .9fr; padding: 16px 14px; align-items: start; }
 .lg-row.head { padding: 12px 14px; color: var(--nt-muted); background: transparent; border-bottom: 1px solid var(--nt-line); }
 .lg-strong { font-weight: 600; color: var(--nt-ink); }
 .lg-pill { display: inline-flex; align-items: center; gap: 5px; width: fit-content; max-width: 100%;
@@ -719,11 +719,13 @@
 .logs .spin.spinning { animation: lgSpin .9s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .logs .spin.spinning { animation: none; } }
 
-/* 最终对齐：固定行盒，两行文本共享同一基线；整体更扁 */
+/* 最终对齐：列序 时间（含消耗+令牌）→ 分组 → 模型 → 费用 → 请求体大小 → 流 → Token → 耗时 → 详情。
+   列宽用比例分配：容器变宽时各列等比铺开、右侧不留空白，列间距保持一致的呼吸感。
+   第一列收窄，把比例让给分组与模型——两者整体左移并拿到更多宽度。 */
 .logs .lg-row {
-  grid-template-columns: 1.5fr 1.3fr 1.9fr .75fr 1fr 1fr .95fr 1.05fr 1fr;
+  grid-template-columns: 1.3fr 1.55fr 2.4fr .85fr .85fr .65fr 1.05fr .9fr 1.5fr;
   padding: 8px 14px;
-  column-gap: 10px;
+  column-gap: 16px;
   align-items: start;
   line-height: 18px;
   font-size: 11px;
@@ -838,7 +840,8 @@
 .market-aside .aside-sec-chev { font-size: 0; color: transparent; transform: none !important; overflow: hidden; }
 .market-aside .aside-sec-chev::before { font-size: 0; }
 
-/* 内容块整体在行内垂直居中：单行值（Token / 请求体大小 / 详情）与两行块共用同一视觉中心 */
+/* 内容块整体在行内垂直居中：单行值（Token / 请求体大小 / 详情）与两行块共用同一视觉中心。
+   这里只改对齐与内边距，列宽以 723 行那份为准。 */
 .logs .lg-row { align-items: center; padding: 6px 14px; }
 .logs .lg-cell-stack { min-height: 0; justify-content: center; }
 .logs .lg-cell-stack > span { line-height: 18px; }
@@ -1180,7 +1183,7 @@
 /* 兑换码输入框也统一胶囊 */
 .tp-input { height: 36px; border-radius: 999px; padding: 0 14px; }
 
-/* 代金券：总额行 + 胶囊化列表 */
+/* 代金券：总额行 + 胶囊化列表（内部无竖条，徽标与金额两端对齐） */
 .home-grid .voucher-total,
 .card .voucher-total {
   display: flex; align-items: center; justify-content: space-between;
@@ -1190,11 +1193,20 @@
 .card .voucher-total .vt-v { color: var(--nt-ink); font-family: var(--nt-code); font-weight: 600; }
 .card .vouchers { display: flex; flex-direction: column; gap: 6px; }
 .card .voucher {
-  display: flex; align-items: center; gap: 8px;
-  height: 34px; padding: 0 12px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-height: 34px; padding: 6px 14px; border-radius: 999px;
   border: 1px solid var(--nt-line); background: rgba(255,255,255,.02);
+  position: relative;
 }
-.card .voucher .who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
+/* 前面不再有任何竖条装饰（旧票根造型的 ::before 已从 style.css 移除） */
+.card .voucher::before, .card .voucher::after { content: none; border: 0; }
+.card .voucher .who {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0; flex: 1 1 auto; overflow: hidden;
+}
+.card .voucher .who .gb { display: inline-flex; align-items: center; gap: 4px; min-width: 0; white-space: nowrap; }
+.card .voucher .who .gb-tag { flex: none; }
+.card .voucher .who .gb-rest { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .card .voucher .vname { font-size: 11.5px; color: var(--nt-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .voucher .amt { flex: none; font-family: var(--nt-code); font-size: 11.5px; color: #e0a44a; }
 
@@ -1248,8 +1260,110 @@
 /* 浮层提到最上层，避免被后续行覆盖 */
 .logs .lg-map-pop { z-index: 80; }
 
-/* 关键：承载浮层的单元格不能 overflow:hidden，否则浮层被裁掉、点开也看不到 */
+/* 关键：承载浮层的单元格不能 overflow:hidden，否则浮层被裁掉、点开也看不到。
+   但列里的文字必须自己裁：否则内容会越界压到下一列，看起来像列没对齐。 */
 .logs .lg-row > .lg-cell-stack { overflow: visible; }
-.logs .lg-row > .lg-cell-stack > span { min-width: 0; }
+.logs .lg-row > .lg-cell-stack > span { min-width: 0; max-width: 100%; }
 .logs .lg-row > .lg-cell-stack .lg-model,
 .logs .lg-row > .lg-cell-stack .lg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logs .lg-row > .lg-cell-stack > span:not(.lg-map-pop),
+.logs .lg-row > .lg-cell-stack > span > span:not(.lg-map-pop) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+/* 详情列可能较长：允许两行内省略，不越界 */
+.logs .lg-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 令牌列只放令牌胶囊（一行）；分组徽标整体移到最后一列「分组详情」。
+   令牌列因此收窄，末列加宽到 1.7fr 放得下 满血/低价/组名/倍率。 */
+.logs .lg-row > .lg-token-row {
+  display: flex; flex-direction: row; align-items: center; gap: 0;
+  min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden;
+}
+.logs .lg-token-row > .lg-pill { flex: none; max-width: 100%; overflow: hidden; }
+
+/* 第一格第二行：类型标签（消耗/消费/充值…）+ 令牌胶囊，同一行紧挨着。
+   父级是 column flex，不加这条会把两者拆成两行。 */
+.logs .lg-meta-row {
+  display: flex; flex-direction: row; align-items: center; gap: 6px;
+  min-width: 0; max-width: 100%; white-space: nowrap; flex-wrap: nowrap;
+}
+.logs .lg-meta-row > .lg-tag { flex: none; }
+.logs .lg-meta-row > .lg-pill { min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.logs .lg-meta-row > .lg-gb {
+  display: inline-flex; align-items: center; min-width: 0; max-width: 100%;
+  overflow: hidden; white-space: nowrap;
+}
+.logs .lg-meta-row .gb {
+  display: inline-flex; align-items: center; gap: 3px;
+  min-width: 0; max-width: 100%; white-space: nowrap; flex-wrap: nowrap;
+}
+.logs .lg-meta-row .gb-tag,
+.logs .lg-meta-row .gb-mul { flex: none; }
+.logs .lg-meta-row .gb-rest { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 分组列（第 3 列）：徽标内部单行，长组名用省略号，不许折行。 */
+.logs .lg-row > .lg-group-cell {
+  display: flex; align-items: center; min-width: 0; max-width: 100%; overflow: hidden;
+}
+/* 模型 + 思考强度同排：模型在前，强度跟在后面，不换行 */
+.logs .lg-model-inline {
+  display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; white-space: nowrap;
+}
+.logs .lg-model-inline .lg-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.logs .lg-model-inline .lg-effort { flex: none; }
+.logs .lg-model-inline .lg-map { flex: none; }
+.logs .lg-group-cell .lg-gb {
+  display: inline-flex; align-items: center; min-width: 0; max-width: 100%;
+  overflow: hidden; white-space: nowrap;
+}
+.logs .lg-group-cell .gb {
+  display: inline-flex; align-items: center; gap: 3px;
+  min-width: 0; max-width: 100%; white-space: nowrap; flex-wrap: nowrap;
+}
+.logs .lg-group-cell .gb-tag,
+.logs .lg-group-cell .gb-mul { flex: none; }
+.logs .lg-group-cell .gb-rest { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 耗时列：左侧细竖条按总耗时分档——绿（<5s）/ 橙黄（5–15s）/ 红（≥15s）。
+   类名用 lg-dur，刻意避开工具栏的 .lg-bar（那是带边框的胶囊容器，套上会变丑）。 */
+.logs .lg-dur {
+  display: block; position: relative; padding-left: 9px;
+  font-size: 10px; line-height: 18px; color: var(--nt-muted);
+  font-variant-numeric: tabular-nums;
+  border: 0; background: none; border-radius: 0;
+}
+.logs .lg-dur::before {
+  content: ''; position: absolute; left: 0; top: 3px; bottom: 3px;
+  width: 3px; border-radius: 2px; background: currentColor; opacity: .9;
+}
+.logs .lg-dur b { font-family: var(--nt-code); font-weight: 600; }
+.logs .lg-dur-fast { color: #4cc38a; }
+.logs .lg-dur-fast b { color: #4cc38a; }
+.logs .lg-dur-mid { color: #e0a44a; }
+.logs .lg-dur-mid b { color: #e0a44a; }
+.logs .lg-dur-slow { color: #e06b7a; }
+.logs .lg-dur-slow b { color: #e06b7a; }
+.logs .lg-dur-none { color: var(--nt-faint); }
+.logs .lg-dur-none::before { background: transparent; }
+
+/* 模型胶囊：液态玻璃——半透明底 + 内高光 + 轻微模糊，边框极细 */
+.logs .lg-model-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.03));
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.22),
+    inset 0 -1px 0 rgba(0,0,0,.18),
+    0 1px 2px rgba(0,0,0,.22);
+  padding: 2px 10px 2px 8px;
+}
+.logs .lg-model-pill:hover {
+  border-color: rgba(255,255,255,.24);
+  background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.05));
+}
+
+/* 耗时列（最后一列）保持常规左对齐，不贴右边界 */
+.logs .lg-row > .lg-cell-stack.lg-time { align-items: flex-start; text-align: left; }
