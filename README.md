@@ -107,6 +107,52 @@
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
 
+## 1.1.8 收紧模型分类，适配宿主 fish.25 的 kind 接入
+
+宿主 `v0.1.3140+fish.25` 起会把插件声明的 `kind` 接进分类：
+
+| 插件给的 `kind` | 宿主认成 | 落点 |
+| --- | --- | --- |
+| `image` | `Draws` | 供应商编辑器「图像模型」、设置 → 图像 |
+| `video` | `Films` | 「视频模型」、设置里的视频行 |
+| `audio` | `Serves = speech` | 「语音模型」、设置 → 语音模型 |
+| `embedding` | `Serves = embedding` | 「向量模型」、设置 → 向量模型 |
+| `chat` / 不给 | `Serves = ""` | 对话模型 |
+
+插件侧的取值本来就是这五个，这次只**收紧判定**，不动取值。
+
+### 语音：只看输出侧
+
+以前把模型名、分组名、描述一起丢进正则，`gpt-4o-audio-preview` 这类「能听音频、输出仍是文本」的对话模型会被卷进语音分区。现在：
+
+```js
+// 端点类型或分组名说了算，模型名不参与
+if (ends.some((e) => /^(audio|tts|asr|transcription|speech)$/i.test(e))) return 'audio'
+if (/tts|asr|text-to-speech|speech|suno|语音|转文字/i.test(groups)) return 'audio'
+```
+
+### 向量：只认完整的 embedding 词
+
+去掉裸 `embed` 匹配——`embedded-agent-v2`、`embed-sandbox` 这类不再误判。判据是 `embedding` / `jina-rerank` 端点、分组名含向量/embedding，或模型名含完整的 `embedding`。
+
+### 不是改判，是收紧
+
+用包内快照的 109 个真实模型逐一对比改动前后：
+
+```
+改前: audio=11  chat=70  embedding=3  image=20  video=5
+改后: audio=11  chat=70  embedding=3  image=20  video=5
+发生变化的模型 0 个
+```
+
+### 老宿主兼容
+
+`kindOutput('audio')` 与 `kindOutput('embedding')` 仍带 `text: true`，所以在不认 `kind` 的老宿主上，这些模型至少还能当对话模型看到，不会被彻底丢掉。
+
+### 待办：`magpie.min`
+
+`package.json` 的 `magpie.min` 仍是 `2.2.2`。等含 fish.25 的宿主版本发布后，抬到该版本号，老宿主上这些模型才会从对话列表里让出去。
+
 ## 1.1.7 删掉自动检查更新与热重载
 
 插件以前会每分钟向 npm registry 问一次最新版本，写进 `page/latest.js`，页面再比对并自动重载。这套东西有两个问题：
