@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**1.1.2**。这是 NearToken 独立 npm 包的版本；magpie 定制宿主的对接要求见 [`docs/HOST-接口对接.md`](docs/HOST-接口对接.md)，宿主升级目标 **2.2.2** 属于另一仓库和发行物。
+当前版本：**1.1.3**。这是 NearToken 独立 npm 包的版本；magpie 定制宿主的对接要求见 [`docs/HOST-接口对接.md`](docs/HOST-接口对接.md)，宿主升级目标 **2.2.2** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.1.2.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.1.3.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -107,6 +107,30 @@
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
 
+## 1.1.3 页面刷新不再每分钟敲一次宿主 · 日志凭据自备
+
+### 「页面隔一会刷新一下」的真身
+
+`tick()` 以前每 60 秒调一次 `load()`，而 `load()` 第一行就是 `neartoken:state`。宿主的 `state()` 第一行又是 `settle()`——命中时 `handOver()` → `dropHostProvider()` 会删掉宿主侧的 provider 条目。
+
+也就是说：**插件页每开一分钟，就给宿主一次删 provider 的机会**。这正是「隔一会刷新一下」「供应商反复掉出」能被连起来的那条链。
+
+现在：
+
+- 每 60 秒只刷用量（`neartoken:usage`），**不再碰 state**；
+- `neartoken:state` 降到启动时 + 显式动作 + 每 10 分钟一次；
+- 页面从后台切回来时同样只刷用量，只有超过 10 分钟才重新问 state。
+
+### 日志为什么一直空
+
+`page/logs-meta.js` 实测给出 `stage: "no-auth"`：宿主从来没有把凭据递进来。宿主的 `state()` 只回 `configured` 与令牌名，不回令牌本身；逐条日志要 `getAuth`，而它只在「宿主要余额」或「发请求」时才有。
+
+现在连接成功那一刻就把令牌留在进程内（只放内存、不落盘），并立即抓一次日志；`fetchLogs` 的钥匙来源改为「宿主递的 → 连接时的 → 都没有才报 no-auth」。页面空态也会直接写清「重新连接一次即可补齐」。
+
+### 验证
+
+- 单元测试 68 项全绿。
+- 包内 35 个文件；`logs.js` / `logs-meta.js` / `health.js` 均为占位。
 ## 1.1.2 单一真相：停用只由宿主过滤 · 清掉旧 options
 
 这一版把「谁来决定模型出现」收敛成一个答案。
