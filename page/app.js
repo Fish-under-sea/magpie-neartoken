@@ -276,7 +276,7 @@
 
   /** tabsBar 是三个视角：原本界面、模型广场、使用日志。 */
   function tabsBar() {
-    const tabs = [['home', '原本界面'], ['market', '模型广场'], ['logs', '使用日志']]
+    const tabs = [['home', '账户总览'], ['market', '模型广场'], ['logs', '使用日志']]
     return el('div', { class: 'tabs', role: 'tablist' },
       tabs.map(([key, label]) => el('button', {
         role: 'tab',
@@ -356,14 +356,19 @@
     const stamp = aff.at ? ' · 同步 ' + new Date(Number(aff.at)).toTimeString().slice(0, 5) : ''
     return el('section', { class: 'card home-wide' },
       el('div', { class: 'rf' },
-        el('div', { class: 'rf-ico', text: '◈' }),
+        el('div', { class: 'rf-ico' }, shareIcon()),
         el('div', { class: 'rf-text' },
           el('h2', { text: '推荐计划', style: 'margin:0' }),
           el('p', { class: 'note', text: '用户通过您的推荐链接注册后，您即可获得奖励。可随时将累计奖励转入余额。', style: 'margin:2px 0 0' })),
         el('div', { class: 'rf-invites' }, el('div', { class: 'k', text: '邀请' }), el('div', { class: 'v', text: invites })),
         el('div', { class: 'rf-link' }, el('span', { text: url })),
-        el('button', { class: 'rf-copy', title: '复制推荐链接', onclick: () => copy(url) }, '⧉'),
+        el('button', { class: 'rf-copy', title: '复制推荐链接', onclick: (e) => copyModelId(url, e.currentTarget) }, copyIcon()),
         stamp ? el('span', { class: 'note', style: 'margin:0 0 0 2px', text: stamp }) : null))
+  }
+
+  /** groupNameOnly 去掉 "[低价][满血] " 这类前缀，只留组名本体。 */
+  function groupNameOnly(name) {
+    return String(name || '').replace(/^(\s*\[[^\]]*\])+\s*/, '').trim()
   }
 
   /** 附件：账户、余额、代金券。 */
@@ -385,10 +390,15 @@
     ]
     const vouchers = Array.isArray(account.vouchers) ? account.vouchers : []
     if (vouchers.length) {
-      parts.push(el('div', { class: 'label', text: '代金券' }))
+      // 总额：各券金额按数字相加，原站顶部就是这么显示的
+      const totalNum = vouchers.reduce((sum, v) => sum + (Number(String(v.amount || '').replace(/[^\d.]/g, '')) || 0), 0)
+      const unit = String(vouchers[0].amount || '').replace(/[\d.,\s]/g, '') || '¥'
+      parts.push(el('div', { class: 'voucher-total' },
+        el('span', { class: 'vt-k', text: '代金券总额' }),
+        el('span', { class: 'vt-v', text: unit + totalNum.toFixed(2) })))
       parts.push(el('div', { class: 'vouchers' }, vouchers.map((v) =>
         el('div', { class: 'voucher' },
-          el('span', { class: 'who', title: v.group, text: v.group }),
+          el('span', { class: 'who' }, groupBadge(String(v.group || '')), el('span', { class: 'vname', text: groupNameOnly(String(v.group || '')) })),
           el('span', { class: 'amt', text: v.amount })))))
     } else {
       parts.push(el('p', { class: 'note', text: '没有可用代金券。站点的邀请计划会发分组券。' }))
@@ -456,13 +466,18 @@
       : (methods.find((m) => m.type === 'alipay')?.type || '')
     const payable = (v) => v >= 500 ? Math.round(v * 0.96) : v >= 200 ? Math.round(v * 0.98) : v
     const saved = (v) => v - payable(v)
+    // 「去支付」可用时才高亮；订单历史按钮据此决定是否与主按钮等高
+    const canPay = !pendingAct && !!amount
     const head = el('div', { class: 'tp-head' },
       el('div', { class: 'tp-badge', text: '￥' }),
       el('div', { class: 'grow' },
         el('h2', { text: '添加资金', style: 'margin:0' }),
         el('p', { class: 'note', text: '选择金额和支付方式', style: 'margin:2px 0 0' })),
-      el('a', { class: 'ghost link', href: affURL('https://neartoken.cc/wallet'), target: '_blank', rel: 'noreferrer' }, '订单历史 ↗'),
-      el('button', { class: 'primary', disabled: !!pendingAct || !amount, onclick: () => pay(method) }, '去支付'))
+      el('a', {
+        class: 'btn ghost tp-history' + (canPay ? '' : ' dim'),
+        href: affURL('https://neartoken.cc/wallet'), target: '_blank', rel: 'noreferrer',
+      }, el('span', { text: '订单历史' }), arrowIcon()),
+      el('button', { class: 'primary tp-pay-btn', disabled: !canPay, onclick: () => pay(method) }, '去支付'))
     const tiles = el('div', { class: 'tp-tiles' }, options.map((v) => {
       const on = v === amount && !pick.custom
       const discount = v >= 500 ? '优惠 4%' : v >= 200 ? '优惠 2%' : ''
@@ -471,7 +486,9 @@
         onclick: () => { pick.amount = v; pick.custom = ''; render() },
       },
         el('b', { text: String(v) }),
-        el('span', { class: 'tp-pay', text: discount ? cur + payable(v) + ' · 节省 ' + saved(v) : cur + v }),
+        el('span', { class: 'tp-pay' },
+          el('span', { text: cur + (discount ? payable(v) : v) }),
+          discount ? el('span', { class: 'tp-save' }, el('i', { class: 'tp-dot' }), '节省 ' + saved(v)) : null),
         discount ? el('span', { class: 'tp-off', text: discount }) : null)
     }))
     const customRow = el('div', { class: 'tp-custom-row' },
@@ -576,6 +593,28 @@
   let logMore = false
   /** 眼睛按钮：隐藏/显示敏感信息（令牌名与费用）。 */
   let logPrivate = false
+  /** 正在拉取用量。 */
+  let logBusy = false
+  /** 分页：当前页与每页行数。 */
+  let logPage = 1
+  let logPageSize = 100
+  /** 哪些逐条行展开了模型映射面板。 */
+  const mapOpen = new WeakSet()
+  /** 只刷新当前区间：命中缓存就不打宿主；force 时强制重取。 */
+  async function refreshUsage(force = false) {
+    const sp = logSpan()
+    logBusy = true
+    render()
+    try {
+      if (force) windows.delete(sp)
+      if (!windows.has(sp)) windows.set(sp, await call('neartoken:usage', { range: sp }))
+    } catch (e) {
+      showError(e)
+    } finally {
+      logBusy = false
+      render()
+    }
+  }
   let logTokenName = ''
   let logRequestId = ''
   let logUpRequestId = ''
@@ -595,8 +634,7 @@
     if (sec > 0) {
       logAutoTimer = setInterval(() => {
         if (tab !== 'logs') return
-        windows.delete('day'); windows.delete('week'); windows.delete('month')
-        load().catch(() => {})
+        refreshUsage(true).catch(() => {})
       }, sec * 1000)
     }
   }
@@ -1019,6 +1057,123 @@
   }
 
   /** modelCard：点击整张卡切换启用；高亮就是启用，只有启用的进 magpie 模型清单。 */
+  /** 模型映射图标：两个圆点由 S 形连线相接，点开看请求/上游/响应模型。 */
+  function mapIcon() {
+    const ns = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(ns, 'svg')
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13')
+    svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.7')
+    svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
+    const path = document.createElementNS(ns, 'path')
+    path.setAttribute('d', 'M8 7h6a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h5')
+    svg.appendChild(path)
+    for (const [cx, cy] of [[19, 7], [6, 19]]) {
+      const c = document.createElementNS(ns, 'circle'); c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', '2')
+      svg.appendChild(c)
+    }
+    return svg
+  }
+
+  /** 推荐计划图标：三个节点由连线相接（分享语义），放在圆形底上。 */
+  function shareIcon() {
+    const ns = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(ns, 'svg')
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '18'); svg.setAttribute('height', '18')
+    svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.7')
+    svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
+    for (const d of ['M9 12a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0z', 'M20 5.5a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0z', 'M20 18.5a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0z', 'M8.6 10.9 15.4 6.6', 'M8.6 13.1 15.4 17.4']) {
+      const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p)
+    }
+    return svg
+  }
+
+  /** 外链箭头：细线斜向右上。 */
+  function arrowIcon() {
+    const ns = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(ns, 'svg')
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13')
+    svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8')
+    svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
+    for (const d of ['M7 17 17 7', 'M9 7h8v8']) {
+      const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p)
+    }
+    return svg
+  }
+
+  /** 复制图标：两个错位圆角方框，和上游一致。 */
+  function copyIcon() {
+    const ns = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(ns, 'svg')
+    svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13')
+    svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8')
+    svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
+    for (const d of ['M9 9h9a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 18 21H9A1.5 1.5 0 0 1 7.5 19.5V10.5A1.5 1.5 0 0 1 9 9z', 'M4.5 15A1.5 1.5 0 0 1 3 13.5V4.5A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5']) {
+      const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p)
+    }
+    return svg
+  }
+
+  /** 模型品牌小图标：按 vendor_id 取本地品牌图标，取不到用首字母块。 */
+  function modelBrandIcon(m) {
+    const p = pricing()
+    const v = (p?.vendors || []).find((x) => String(x.id) === String(m?.vendor_id))
+    const item = v ? vendorIconModel(v, p) : null
+    if (item && item.src) return el('img', { class: 'ml-vicon', src: item.src, alt: '', width: 13, height: 13, loading: 'lazy' })
+    return el('span', { class: 'ml-vicon ml-vicon-fb', text: String(m?.name || '?').slice(0, 1).toUpperCase() })
+  }
+
+  /** fmtMoney 把价格收成最多两位小数（去掉多余 0）。 */
+  function fmtMoney(v) {
+    const n = Number(v)
+    if (!Number.isFinite(n)) return '—'
+    const fixed = n.toFixed(2)
+    if (fixed.endsWith('.00')) return fixed.slice(0, -3)
+    if (fixed.endsWith('0')) return fixed.slice(0, -1)
+    return fixed
+  }
+
+  /** modelRow 渲染列表模式下的一行：模型 / 类型 / 价格 / 缓存 / 供应商 / 标签 / 端点 / 分组。 */
+  function modelRow(m) {
+    const p = priceOf(m)
+    const on = !disabledModels.has(m.name)
+    const groups = (m?.enable_groups || []).slice()
+    const shown = groups.slice(0, 2)
+    const restCount = Math.max(0, groups.length - shown.length)
+    const ends = m?.supported_endpoint_types || []
+    const vendorName = vendorOf(m.vendor_id)
+    const item = (pricing()?.vendors || []).find((v) => String(v.id) === String(m.vendor_id))
+    const vIcon = item ? vendorIconModel(item, pricing()) : null
+    return el('div', {
+      class: 'ml-row' + (on ? '' : ' off'),
+      'data-model': m.name,
+      onclick: () => toggleModel(m.name),
+    },
+      el('span', { class: 'ml-cell ml-model' },
+        modelBrandIcon(m), el('span', { class: 'ml-name', text: m.name }),
+        el('span', { class: 'ml-sort', text: '⇅' })),
+      el('span', { class: 'ml-cell ml-type ' + (p.tiered ? 'dyn' : 'flat'), text: p.unconfigured ? '按用量计费' : p.tiered ? '动态计费' : '按量计费' }),
+      el('span', { class: 'ml-cell ml-price' },
+        el('span', { class: 'ml-p-line' },
+          el('span', { class: 'ml-p-k', text: '输入' }), el('span', { class: 'ml-p-v', text: fmtMoney(p.input) }),
+          el('span', { class: 'ml-p-k', text: '输出' }), el('span', { class: 'ml-p-v', text: fmtMoney(p.output) })),
+        el('span', { class: 'ml-p-unit', text: 'CNY / 1M Token' })),
+      el('span', { class: 'ml-cell ml-cache' },
+        el('span', { class: 'ml-c-v', text: p.cache != null ? '¥' + fmtMoney(p.cache) : '—' }),
+        el('span', { class: 'ml-c-unit', text: '/ 1M' })),
+      el('span', { class: 'ml-cell ml-vendor' },
+        vIcon && vIcon.src ? el('img', { class: 'ml-vicon', src: vIcon.src, alt: '', width: 13, height: 13 }) : null,
+        el('span', { text: vendorName || '—' })),
+
+      el('span', { class: 'ml-cell ml-ends' },
+        ends.length
+          ? [...ends.slice(0, 2).map((e) => el('span', { class: 'ml-end', text: e })),
+            ends.length > 2 ? el('span', { class: 'ml-more', text: '+' + (ends.length - 2) }) : null].filter(Boolean)
+          : el('span', { class: 'ml-dash' }, el('i'))),
+      el('span', { class: 'ml-cell ml-groups', title: groups.join(' / ') },
+        shown.map((g) => el('span', { class: 'ml-gb' }, groupBadge(g))),
+        restCount ? el('span', { class: 'ml-more', text: '+' + restCount }) : null))
+  }
+
   function modelCard(m) {
     const p = priceOf(m)
     const ends = (m?.supported_endpoint_types || []).join(', ')
@@ -1073,11 +1228,14 @@
         el('div', { class: 'grow' },
           el('div', { class: 'mc-name', text: m.name }),
           el('div', { class: 'mc-vendor', text: vendorOf(m.vendor_id) })),
-        el('span', { class: 'mc-flag', text: on ? '✓ 已启用' : '○ 未启用' }),
+        el('span', {
+          class: 'mc-flag ' + (on ? 'on' : 'off'),
+          'data-mc-flag': on ? 'on' : 'off',
+        }, el('i', { class: 'mc-dot' }), el('span', { text: on ? '已启用' : '未启用' })),
         el('button', {
           class: 'mc-copy', title: '复制模型 ID',
           onclick: (e) => { e.stopPropagation(); copyModelId(m.name, e.currentTarget) },
-        }, '⧉')),
+        }, copyIcon())),
       el('p', { class: 'mc-desc', text: m.description || '暂无描述。' }),
       el('div', { class: 'mc-billing ' + (p.tiered ? 'dyn' : 'flat'), text: p.unconfigured ? '按用量计费' : p.tiered ? '动态计费' : p.perCall !== undefined ? '按次计费' : '按量计费' }),
       priceRow,
@@ -1098,9 +1256,11 @@
         el('span', null, el('span', { class: 'k', text: '延迟' }),
           el('span', { class: 'v', text: m.latency || '—s' })),
         el('span', null, el('span', { class: 'k', text: '吞吐' }),
-          el('span', { class: 'v', text: m.throughput || '—t/s' }))),
-      el('div', { class: 'mc-foot' },
-        el('a', { class: 'link', href: modelDetailURL(m), target: '_blank', rel: 'noreferrer', onclick: (e) => e.stopPropagation() }, '详情 ›')))
+          el('span', { class: 'v', text: m.throughput || '—t/s' })),
+        el('a', {
+          class: 'mc-more', href: modelDetailURL(m), target: '_blank', rel: 'noreferrer',
+          onclick: (e) => e.stopPropagation(),
+        }, el('span', { text: '详情' }), el('span', { class: 'mc-more-arrow', text: '›' }))))
   }
 
   /** 官网最新版本口径：系列内代际落后量 → 主版本 → 档位 → 次版本。 */
@@ -1164,6 +1324,12 @@
       count.title = at ? '插件运行时每 5 分钟拉取目录，页面每分钟重载快照' : '目录来自插件写入的本地快照'
     }
     box.className = 'model-grid' + (marketLayout === 'list' ? ' as-list' : '')
+    if (marketLayout === 'list') {
+      const head = el('div', { class: 'ml-head' },
+        ['模型', '类型', '价格', '缓存', '供应商', '端点', '分组'].map((t) => el('span', { text: t })))
+      box.replaceChildren(head, ...(list.length ? list.map(modelRow) : [el('p', { class: 'note', text: '没有符合条件的模型。' })]))
+      return
+    }
     box.replaceChildren(...(list.length ? list.map(modelCard) : [el('p', { class: 'note', text: '没有符合条件的模型。' })]))
   }
 
@@ -1375,7 +1541,21 @@
     const eggGroups = allGroups.filter(isEgg)
     llmGroups.splice(0, llmGroups.length, ...llmGroups.filter((g) => !isEgg(g)))
     funcGroups.splice(0, funcGroups.length, ...funcGroups.filter((g) => !isEgg(g)))
-    const vendors = (p?.vendors || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'))
+    // 供应商排序：先按指定优先级（OpenAI / Claude / Gemini / Grok / Kimi / GLM / Qwen / DeepSeek / 腾讯 / MiniMax / 小米 / 字节），其余按名称。
+    const VENDOR_ORDER = [
+      /openai|chatgpt/i, /anthropic|claude/i, /google|gemini/i, /xai|grok/i,
+      /kimi|moonshot/i, /glm|zhipu|智谱/i, /qwen|阿里|alibaba/i, /deepseek/i,
+      /腾讯|tencent/i, /minimax/i, /小米|mimo|xiaomi/i, /字节|bytedance|豆包/i,
+    ]
+    const vendorRank = (v) => {
+      const name = String(v.name || '') + ' ' + String(v.id || '')
+      for (let i = 0; i < VENDOR_ORDER.length; i += 1) if (VENDOR_ORDER[i].test(name)) return i
+      return VENDOR_ORDER.length
+    }
+    const vendors = (p?.vendors || []).slice().sort((a, b) => {
+      const d = vendorRank(a) - vendorRank(b)
+      return d || String(a.name).localeCompare(String(b.name), 'zh')
+    })
     const search = el('input', {
       class: 'market-search', type: 'search', placeholder: '搜索模型名称、供应商、端点或标签...',
       value: marketQuery,
@@ -1471,7 +1651,7 @@
         'data-market-setting': 'endpoint', 'data-market-value': k, 'aria-pressed': String(marketEndpoint === k),
         onclick: () => { marketEndpoint = k; refreshMarketView() },
       }, el('span', { text: label }), chipCount(k === 'all' ? countOf(() => true) : countOf((m) => (m.supported_endpoint_types || []).includes(k)), label))))
-    const vendorChips = el('div', { class: 'market-chips chips-row' },
+    const vendorChips = el('div', { class: 'market-chips vendor-grid' },
       vendors.map((v) => {
         const item = vendorIconModel(v, p)
         return el('button', {
@@ -1512,18 +1692,35 @@
       return el('section', { class: 'aside-sec' + (open ? '' : ' closed'), 'data-sec-body': key }, head,
         el('div', { class: 'aside-sec-body' }, body))
     }
+    /** 重置图标：一段圆弧加回卷箭头，和上游一致。 */
+    const resetIcon = () => {
+      const ns = 'http://www.w3.org/2000/svg'
+      const svg = document.createElementNS(ns, 'svg')
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '14'); svg.setAttribute('height', '14')
+      svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2')
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
+      svg.setAttribute('class', 'ma-reset-svg')
+      for (const d of ['M3.5 12a8.5 8.5 0 1 0 3-6.6', 'M3 4.5v5h5']) {
+        const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p)
+      }
+      return svg
+    }
     const activeCount = [marketGroup, marketKind !== 'all', marketQuota !== 'all', marketEndpoint !== 'all', marketVendors.size].filter(Boolean).length
     const aside = el('aside', { class: 'market-aside' },
       el('div', { class: 'ma-head' },
-        el('h3', { text: '筛选' }),
-        el('button', { class: 'link', onclick: () => { marketQuery = ''; marketGroup = ''; marketKind = 'all'; marketQuota = 'all'; marketEndpoint = 'all'; marketVendors.clear(); search.value = ''; refreshMarketView() } }, '↺ 重置')),
-      el('p', { class: 'note', text: '按供应商、分组、类型和标签细化搜索模型。' }),
-      activeCount ? el('p', { class: 'note aside-active', text: '已启用 ' + activeCount + ' 个筛选条件' }) : null,
+        el('div', { class: 'ma-head-main' },
+          el('h3', { class: 'ma-title', text: '筛选' }),
+          el('p', { class: 'ma-desc', text: '按供应商、分组、类型和标签细化模型。' })),
+        el('button', {
+          class: 'ma-reset', title: '清空全部筛选条件',
+          onclick: () => { marketQuery = ''; marketGroup = ''; marketKind = 'all'; marketQuota = 'all'; marketEndpoint = 'all'; marketVendors.clear(); search.value = ''; refreshMarketView() },
+        }, resetIcon(), el('span', { text: '重置' }))),
+      activeCount ? el('p', { class: 'ma-badge', text: '筛选已启用' }) : null,
       asideSec('group', '分组', groupChips, true, marketGroup ? '1' : ''),
       asideSec('kind', '类型', kinds, true, marketKind !== 'all' ? '1' : ''),
-      asideSec('vendor', '供应商', vendorChips, false, marketVendors.size ? String(marketVendors.size) : ''),
-      asideSec('quota', '定价类型', quotaChips, false, marketQuota !== 'all' ? '1' : ''),
-      asideSec('endpoint', '端点类型', endpointChips, false, marketEndpoint !== 'all' ? '1' : ''))
+      asideSec('vendor', '供应商', vendorChips, true, marketVendors.size ? String(marketVendors.size) : ''),
+      asideSec('quota', '定价类型', quotaChips, true, marketQuota !== 'all' ? '1' : ''),
+      asideSec('endpoint', '端点类型', endpointChips, true, marketEndpoint !== 'all' ? '1' : ''))
     const off = disabledModels.size
     const body = el('div', { class: 'market-body' },
       aside,
@@ -1615,6 +1812,17 @@
 
     // 原站的自定义下拉：触发器 + 浮层，选中项带 ✓，可带「已弃用」徽标
     // 原站下拉右端是「上箭头 + 下箭头」两个小三角，不是单个 ⌄
+    const refreshIcon = () => {
+      const ns = 'http://www.w3.org/2000/svg'
+      const svg = document.createElementNS(ns, 'svg')
+      svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('width', '14'); svg.setAttribute('height', '14')
+      svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '2')
+      svg.setAttribute('stroke-linecap', 'round'); svg.setAttribute('stroke-linejoin', 'round')
+      for (const d of ['M20 11a8 8 0 1 0-2.3 5.7', 'M20 4v7h-7']) {
+        const p = document.createElementNS(ns, 'path'); p.setAttribute('d', d); svg.appendChild(p)
+      }
+      return svg
+    }
     const keyIcon = () => {
       const ns = 'http://www.w3.org/2000/svg'
       const svg = document.createElementNS(ns, 'svg')
@@ -1685,6 +1893,8 @@
     const detailRows = Array.isArray(data?.rows) ? data.rows : null
     const colIdx = { token: 2, model: 3, flow: 4, tokenCount: 5, bytes: 6, cost: 7, time: 8, detail: 9 }
     const hiddenClass = Object.entries(colIdx).filter(([k]) => !logCols.has(k)).map(([, n]) => 'hide-c' + n).join(' ')
+    /** 空值横线：用 CSS 画，几何中心与数字中线一致（em dash 的字形墨迹偏低）。 */
+    const dash = (cls) => el('span', { class: 'lg-dash' + (cls ? ' ' + cls : ''), 'aria-hidden': 'true' }, el('i'))
     const fmtNum = (n) => {
       const v = Number(n)
       if (!Number.isFinite(v)) return '—'
@@ -1700,6 +1910,27 @@
       el('input', { class: 'lg-input', type: 'search', placeholder: '令牌名称', value: logTokenName, oninput: (e) => { logTokenName = e.target.value } }),
       el('input', { class: 'lg-input', type: 'search', placeholder: '请求 ID', value: logRequestId, oninput: (e) => { logRequestId = e.target.value } }),
       el('input', { class: 'lg-input', type: 'search', placeholder: '上游请求 ID', value: logUpRequestId, oninput: (e) => { logUpRequestId = e.target.value } })) : null
+
+    const pageCount = (n) => Math.max(1, Math.ceil(n / logPageSize))
+    const pageSlice = (list) => list.slice((logPage - 1) * logPageSize, logPage * logPageSize)
+    const pagerBar = (totalCount) => el('div', { class: 'lg-pager' },
+      el('span', { class: 'lg-total', text: '总计：' + totalCount }),
+      el('span', { class: 'lg-pagesize-label', text: '每页行数' }),
+      el('div', { class: 'lg-menu-wrap' },
+        el('button', {
+          class: 'lg-trigger lg-pagesize', 'aria-expanded': String(logMenu === 'pagesize'),
+          onclick: (e) => { e.stopPropagation(); logMenu = logMenu === 'pagesize' ? '' : 'pagesize'; render() },
+        }, el('span', { class: 'lg-trigger-text', text: String(logPageSize) }), chev()),
+        logMenu === 'pagesize' ? el('div', { class: 'lg-menu small up' },
+          el('div', { class: 'lg-menu-list' }, [10, 20, 30, 40, 50, 100].map((v) => el('button', {
+            class: 'lg-menu-item' + (v === logPageSize ? ' sel' : ''),
+            onclick: (e) => { e.stopPropagation(); logPageSize = v; logPage = 1; logMenu = ''; render() },
+          }, el('span', { class: 'lg-menu-label', text: String(v) }), v === logPageSize ? el('span', { class: 'lg-check', text: '✓' }) : null)))) : null),
+      el('button', { class: 'lg-btn icon-btn', title: '第一页', disabled: logPage <= 1, onclick: () => { if (logPage > 1) { logPage = 1; render() } } }, '«'),
+      el('button', { class: 'lg-btn icon-btn', title: '上一页', disabled: logPage <= 1, onclick: () => { if (logPage > 1) { logPage -= 1; render() } } }, '‹'),
+      el('span', { class: 'lg-page-pill', text: String(logPage) }),
+      el('button', { class: 'lg-btn icon-btn', title: '下一页', disabled: logPage >= pageCount(totalCount), onclick: () => { if (logPage < pageCount(totalCount)) { logPage += 1; render() } } }, '›'),
+      el('button', { class: 'lg-btn icon-btn', title: '最后一页', disabled: logPage >= pageCount(totalCount), onclick: () => { logPage = pageCount(totalCount); render() } }, '»'))
 
     const all = (data?.models || []).slice().sort((a, b) => b.tokens - a.tokens)
     const total = all.reduce((sum, m) => sum + m.tokens, 0) || 1
@@ -1725,7 +1956,7 @@
             class: 'lg-btn bordered' + (logInterval > 0 ? ' on' : ''), title: '自动刷新间隔',
             'aria-expanded': String(logMenu === 'interval'),
             onclick: (e) => { e.stopPropagation(); logMenu = logMenu === 'interval' ? '' : 'interval'; render() },
-          }, el('span', { class: 'spin', text: '⟳' }), el('span', { text: ' ' + (logInterval > 0 ? logInterval + 's' : '关闭') }), chev()),
+          }, el('span', { class: 'spin' + (logBusy ? ' spinning' : '') }, refreshIcon()), el('span', { text: ' ' + (logInterval > 0 ? logInterval + 's' : '关闭') }), chev()),
           logMenu === 'interval' ? el('div', { class: 'lg-menu small' },
             el('div', { class: 'lg-menu-title', text: '自动刷新已' + (logInterval > 0 ? '开启' : '关闭') }),
             el('div', { class: 'lg-menu-list' }, [[0, '关闭'], [5, '5s'], [10, '10s'], [30, '30s'], [60, '60s']].map(([val, text]) => el('button', {
@@ -1743,11 +1974,15 @@
           onclick: (e) => {
             const btn = e.currentTarget
             btn.classList.add('searching')
-            windows.delete('day'); windows.delete('week'); windows.delete('month')
-            load().catch(() => {}).finally(() => setTimeout(() => btn.classList.remove('searching'), 500))
+            refreshUsage(true).finally(() => setTimeout(() => btn.classList.remove('searching'), 500))
           },
         }, '搜索'),
         el('button', { class: 'lg-btn outline', onclick: () => { logQuery = ''; logGroup = ''; logKind = 'all'; logFrom = null; logTo = null; windows.clear(); load().catch(() => {}); render() } }, '重置'),
+        el('a', {
+          class: 'lg-btn outline', title: '在官网查看完整日志',
+          href: 'https://neartoken.cc/usage-logs/common?aff=0mY4', target: '_blank', rel: 'noopener noreferrer',
+          style: 'text-decoration:none;display:inline-flex;align-items:center',
+        }, '在官网打开'),
         el('div', { class: 'lg-menu-wrap right' },
           el('button', {
             class: 'lg-btn outline', 'aria-expanded': String(logMenu === 'cols'),
@@ -1777,7 +2012,8 @@
 
     if (detailRows && detailRows.length) {
       const colsD = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
-      const body = detailRows.map((r) => el('div', { class: 'lg-row' },
+      const pageRowsD = pageSlice(detailRows)
+      const body = pageRowsD.map((r) => el('div', { class: 'lg-row' },
         el('span', { class: 'lg-cell-stack' },
           el('span', { text: String(r.time || '') }),
           el('span', { class: 'lg-tag ok', text: r.kind || '消耗' })),
@@ -1785,30 +2021,40 @@
           el('span', { class: 'lg-pill' }, keyIcon(), el('span', { text: logPrivate ? '••••' : (r.tokenName || '—') })),
           r.group ? el('span', { class: 'lg-group' }, groupBadge(r.group)) : null),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-model' }, modelIcon(r.model), el('span', { text: r.model || '—' })),
+          el('span', { class: 'lg-model-row' },
+            el('span', { class: 'lg-model' }, modelIcon(r.model), el('span', { text: r.model || '—' })),
+            r.upModel || r.respModel ? el('button', {
+              class: 'lg-map' + (mapOpen.has(r) ? ' on' : ''), title: '查看模型映射',
+              onclick: (e) => { e.stopPropagation(); if (mapOpen.has(r)) mapOpen.delete(r); else mapOpen.add(r); render() },
+            }, mapIcon()) : null),
           r.effort ? el('span', { class: 'lg-effort', text: r.effort }) : null),
+        mapOpen.has(r) ? el('span', { class: 'lg-map-pop' },
+          [['请求模型', r.model], ['上游请求模型', r.upModel], ['响应模型', r.respModel]].map(([k, v]) =>
+            el('span', { class: 'lg-map-row' }, el('span', { class: 'lg-map-k', text: k }), el('span', { class: 'lg-map-v', text: v || '—' }))) ) : null,
         el('span', { class: 'lg-cell-stack' },
-          el('span', { text: '流' }),
-          el('span', { class: 'lg-sub', text: (r.tps ? r.tps + ' t/s' : '—') })),
+          el('span', { class: 'lg-flow', text: '流' }),
+          el('span', { class: 'lg-sub' }, r.tps ? el('span', { text: r.tps + ' t/s' }) : dash('sm'))),
         el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
-        el('span', { class: 'num', text: r.bytes != null ? fmtBytes(r.bytes) : '—' }),
+        el('span', { class: 'num' }, r.bytes != null ? fmtBytes(r.bytes) : dash()),
         el('span', { class: 'num', text: logPrivate ? '••••' : (r.cost || '—') }),
         el('span', { class: 'lg-cell-stack lg-time' },
-          el('span', null, '首字 ', el('b', { text: r.ttft || '—' })),
-          el('span', null, '耗时 ', el('b', { text: r.dur || '—' }))),
-        el('span', { class: 'lg-detail', text: r.detail || '—' })))
+          el('span', null, '首字 ', r.ttft ? el('b', { text: r.ttft }) : dash('in')),
+          el('span', null, '耗时 ', r.dur ? el('b', { text: r.dur }) : dash('in'))),
+        el('span', { class: 'lg-detail' }, r.detail || dash())))
       return el('section', { class: 'logs' },
         el('h2', { class: 'logs-title', text: '通用日志' }),
-        toolbar, moreRow, statbar,
-        el('div', { class: 'lg-table-wrap' }, el('div', { class: 'lg-table ' + hiddenClass },
-          el('div', { class: 'lg-row head' }, colsD.map((c) => el('span', { text: c }))), body)),
+        el('div', { class: 'logs-panel' },
+          toolbar, moreRow, statbar,
+          el('div', { class: 'lg-table-wrap' }, el('div', { class: 'lg-table ' + hiddenClass },
+            el('div', { class: 'lg-row head' }, colsD.map((c) => el('span', { text: c }))), body)),
+          pagerBar(detailRows.length)),
         el('p', { class: 'note', text: '数据来自站点逐条日志。' }))
     }
 
     const cols = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
     const table = el('div', { class: 'lg-table ' + hiddenClass },
       el('div', { class: 'lg-row head' }, cols.map((c) => el('span', { text: c }))),
-      rows.length ? rows.map((m) => {
+      pageSlice(rows).length ? pageSlice(rows).map((m) => {
         const snap = (pricing()?.models || []).find((x) => x.name === m.model)
         const group = snap ? cheapestGroup(snap) : ''
         const effort = snap && marketKindOf(snap) === 'chat' ? 'High' : ''
@@ -1823,16 +2069,16 @@
           el('span', { class: 'lg-pill lg-model-pill', title: m.model }, modelIcon(m.model), el('span', { text: m.model })),
           effort ? el('span', { class: 'lg-effort', text: effort }) : null),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { text: '流' }),
-          el('span', { class: 'lg-sub', text: '—' })),
+          el('span', { class: 'lg-flow', text: '流' }),
+          el('span', { class: 'lg-sub' }, dash('sm'))),
         el('span', { class: 'lg-strong num', text: fmtNum(m.tokens) }),
-        el('span', { class: 'lg-strong num', text: '—' }),
+        el('span', { class: 'lg-strong num' }, dash()),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (m.costText || '—') })),
         el('span', { class: 'lg-cell-stack lg-time' },
-          el('span', { class: 'lg-bar-green' }, '首字 ', el('b', { text: '—' })),
-          el('span', { class: 'lg-bar-green' }, '耗时 ', el('b', { text: '—' }))),
-        el('span', { class: 'lg-detail', text: '—' }))
+          el('span', { class: 'lg-bar-green' }, '首字 ', dash('in')),
+          el('span', { class: 'lg-bar-green' }, '耗时 ', dash('in'))),
+        el('span', { class: 'lg-detail' }, dash()))
       })
         : el('div', { class: 'lg-empty', text: '这个筛选下没有记录。' }))
 
@@ -1845,8 +2091,10 @@
 
     return el('section', { class: 'logs' },
       el('h2', { class: 'logs-title', text: '通用日志' }),
-      toolbar, moreRow, statbar,
-      el('div', { class: 'lg-table-wrap' }, table),
+      el('div', { class: 'logs-panel' },
+        toolbar, moreRow, statbar,
+        el('div', { class: 'lg-table-wrap' }, table),
+        pagerBar(rows.length)),
       el('p', { class: 'note', text: '数字来自站点用量端点，按模型汇总；站点未提供逐条流水，故「流 / 请求体大小 / 耗时」留空。' }))
   }
 
@@ -1979,11 +2227,20 @@
       }
     }
     if (btn) {
-      const prev = btn.textContent
-      btn.textContent = ok ? '✓' : '⧉'
+      // 按钮里是 SVG 图标：不能改 textContent（会把图标清掉，看起来像按钮消失了）。
+      // 改成叠加一个临时对勾徽标，并把图标临时压暗，定时复原。
       btn.title = (ok ? '已复制 ' : '复制失败，请手动复制 ') + text
+      btn.classList.toggle('copied', ok)
+      btn.classList.toggle('copyfail', !ok)
+      const badge = document.createElement('span')
+      badge.className = 'copy-badge'
+      badge.textContent = ok ? '✓' : '!'
+      btn.appendChild(badge)
       clearTimeout(btn.__copyTimer)
-      btn.__copyTimer = setTimeout(() => { btn.textContent = prev }, 900)
+      btn.__copyTimer = setTimeout(() => {
+        badge.remove()
+        btn.classList.remove('copied', 'copyfail')
+      }, 900)
     }
     return ok
   }

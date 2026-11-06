@@ -350,7 +350,7 @@
 }
 /* 展开朝上、收起朝右：和上游定价页的折叠箭头一致 */
 .aside-sec-chev { flex: none; color: var(--nt-faint); font-size: 12px; transition: transform .16s ease; transform: rotate(180deg); }
-.aside-sec.closed .aside-sec-chev { transform: rotate(0deg); }
+.aside-sec.closed .aside-sec-chev { transform: none; }
 .aside-sec.closed .aside-sec-body { display: none; }
 .aside-sec-body { padding: 0 0 10px; }
 .market-aside .aside-active { color: var(--nt-accent); }
@@ -688,3 +688,521 @@
 .logs .lg-model { display: inline-flex; align-items: center; gap: 6px; }
 
 .logs .lg-row .num { font-variant-numeric: tabular-nums; }
+
+/* 对齐上游：行更紧凑，各列首行共享同一基线，胶囊压低 */
+.logs .lg-row {
+  grid-template-columns: 1.45fr 1.25fr 1.85fr .7fr .95fr .95fr .9fr 1.05fr 1.05fr;
+  padding: 10px 14px;
+  align-items: start;
+  column-gap: 12px;
+  font-size: 11.5px;
+  line-height: 20px;
+}
+.logs .lg-row.head { padding: 8px 14px; line-height: 20px; font-size: 10px; }
+.logs .lg-cell-stack { gap: 2px; }
+.logs .lg-cell-stack > span { line-height: 20px; }
+.logs .lg-strong, .logs .lg-row .num { line-height: 20px; }
+.logs .lg-pill { padding: 0 8px; height: 20px; line-height: 18px; font-size: 11px; border-radius: 999px; gap: 5px; }
+.logs .lg-pill .lg-mico { width: 13px; height: 13px; }
+.logs .lg-pill svg { width: 12px; height: 12px; }
+.logs .lg-gb { margin-top: 0; }
+.logs .lg-gb .gb-tag { font-size: 8.5px; line-height: 14px; padding: 0 4px; }
+.logs .lg-gb .gb-rest { font-size: 9.5px; }
+.logs .lg-effort { font-size: 10px; line-height: 16px; }
+.logs .lg-sub { font-size: 9.5px; line-height: 16px; }
+.logs .lg-tag { line-height: 16px; }
+.logs .lg-bar-green { line-height: 18px; font-size: 10px; }
+.logs .lg-model { line-height: 20px; }
+.logs .lg-detail { line-height: 20px; font-size: 10.5px; }
+
+.logs .spin { display: inline-flex; align-items: center; justify-content: center; }
+.logs .spin.spinning { animation: lgSpin .9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .logs .spin.spinning { animation: none; } }
+
+/* 最终对齐：固定行盒，两行文本共享同一基线；整体更扁 */
+.logs .lg-row {
+  grid-template-columns: 1.5fr 1.3fr 1.9fr .75fr 1fr 1fr .95fr 1.05fr 1fr;
+  padding: 8px 14px;
+  column-gap: 10px;
+  align-items: start;
+  line-height: 18px;
+  font-size: 11px;
+}
+.logs .lg-row.head { padding: 7px 14px; line-height: 18px; font-size: 9.5px; letter-spacing: 0; }
+.logs .lg-cell-stack { gap: 1px; min-height: 36px; justify-content: flex-start; }
+.logs .lg-cell-stack > span { line-height: 18px; }
+.logs .lg-strong, .logs .lg-row .num, .logs .lg-model, .logs .lg-detail { line-height: 18px; font-size: 11px; }
+.logs .lg-pill {
+  height: 18px; line-height: 16px; padding: 0 7px; gap: 4px;
+  font-size: 10.5px; border-radius: 999px;
+}
+.logs .lg-pill .lg-mico { width: 12px; height: 12px; }
+.logs .lg-pill svg { width: 11px; height: 11px; }
+.logs .lg-tag { line-height: 14px; font-size: 9px; padding: 0 4px; border-radius: 4px; }
+.logs .lg-effort { line-height: 15px; font-size: 9.5px; }
+.logs .lg-sub { line-height: 14px; font-size: 9px; }
+.logs .lg-gb { margin-top: 0; }
+.logs .lg-gb .gb-tag { font-size: 8px; line-height: 13px; padding: 0 3px; }
+.logs .lg-gb .gb-rest { font-size: 9px; line-height: 13px; }
+.logs .lg-bar-green { line-height: 16px; font-size: 9.5px; }
+.logs .lg-bar-green b { font-size: 9.5px; }
+
+/* 整页大容器 + 底部分页 */
+.logs .logs-panel {
+  border: 1px solid var(--nt-line); border-radius: 16px;
+  background: rgba(255,255,255,.015); padding: 12px;
+}
+.logs .lg-pager {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--nt-line);
+  font-size: 11px; color: var(--nt-muted);
+}
+.logs .lg-total { margin-right: auto; }
+.logs .lg-pagesize-label { color: var(--nt-faint); }
+.logs .lg-pagesize { min-width: 84px; height: 30px; }
+.logs .lg-page-pill {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px;
+  padding: 0 8px; border-radius: 999px; background: var(--nt-accent); color: #fff; font-family: var(--nt-code); font-size: 11px;
+}
+.logs .lg-btn.icon-btn[disabled] { opacity: .35; cursor: default; }
+.logs .lg-menu.up { top: auto; bottom: calc(100% + 6px); }
+
+/* 所有列的首行值统一装进 18px 行盒，数字、破折号、胶囊文字共用中线 */
+.logs .lg-row > .lg-strong,
+.logs .lg-row > .num,
+.logs .lg-row > .lg-detail {
+  display: inline-flex; align-items: center; height: 18px; line-height: 18px;
+}
+.logs .lg-cell-stack > span:first-child { display: inline-flex; align-items: center; height: 18px; line-height: 18px; }
+.logs .lg-cell-stack > span:first-child.lg-pill { height: 18px; }
+.logs .lg-cell-stack { align-content: start; }
+.logs .lg-row { align-items: start; }
+
+/* 筛选卡片：标题 + 说明 + 右上角带旋转图标的重置，与上游一致 */
+.market-aside .ma-head { display: flex; align-items: flex-start; gap: 10px; }
+.market-aside .ma-head-main { flex: 1 1 auto; min-width: 0; }
+.market-aside .ma-title { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--nt-ink); line-height: 20px; }
+.market-aside .ma-desc { margin: 2px 0 0; font-size: 11.5px; line-height: 17px; color: var(--nt-muted); }
+.market-aside .ma-reset {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  border: 0; background: transparent; color: var(--nt-muted);
+  font-size: 12px; padding: 2px 4px; border-radius: 8px; cursor: pointer;
+  transition: color .15s ease, background-color .15s ease;
+}
+.market-aside .ma-reset:hover { color: var(--nt-ink); background: rgba(255,255,255,.06); }
+.market-aside .ma-reset-icon { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; }
+.market-aside .ma-reset-icon i {
+  width: 11px; height: 11px; border: 1.5px solid currentColor; border-radius: 50%;
+  border-top-color: transparent; border-right-color: transparent; display: block;
+  transition: transform .3s ease;
+}
+.market-aside .ma-reset:hover .ma-reset-icon i { transform: rotate(-140deg); }
+.market-aside .ma-badge {
+  display: inline-flex; align-items: center; margin: 8px 0 0; padding: 1px 9px;
+  border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid var(--nt-line);
+  font-size: 10.5px; color: var(--nt-ink);
+}
+@media (prefers-reduced-motion: reduce) { .market-aside .ma-reset, .market-aside .ma-reset-icon i { transition: none; } }
+
+/* 空值横线：几何中心与数字中线对齐，粗细与上游一致 */
+.logs .lg-dash { display: inline-flex; align-items: center; justify-content: flex-start; height: 18px; line-height: 18px; }
+.logs .lg-dash > i { display: block; width: 9px; height: 1.5px; border-radius: 1px; background: currentColor; opacity: .72; }
+.logs .lg-dash.sm { height: 14px; }
+.logs .lg-dash.sm > i { width: 8px; height: 1.25px; }
+.logs .lg-dash.in { height: auto; }
+.logs .lg-dash.in > i { width: 8px; height: 1.25px; }
+
+/* 重置图标：SVG，hover 时整体回转 */
+.market-aside .ma-reset-svg { display: block; transition: transform .35s ease; }
+.market-aside .ma-reset:hover .ma-reset-svg { transform: rotate(-180deg); }
+/* 说明文字回到正常字号与行高，不再被挤窄 */
+.market-aside .ma-desc { margin: 4px 0 0; font-size: 12px; line-height: 18px; color: var(--nt-muted); max-width: 22em; }
+.market-aside .ma-head { gap: 8px; }
+.market-aside .ma-reset { padding: 2px 6px; }
+/* 折叠箭头：细 chevron，不用字符 */
+.market-aside .aside-sec-chev { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; }
+.market-aside .aside-sec-chev::before {
+  content: ''; width: 7px; height: 7px; border-right: 1.5px solid var(--nt-muted); border-bottom: 1.5px solid var(--nt-muted);
+  transform: rotate(45deg); transition: transform .2s ease; margin-top: -3px;
+}
+.market-aside .aside-sec.open .aside-sec-chev::before, .market-aside .aside-sec:not(.closed) .aside-sec-chev::before { transform: rotate(-135deg); margin-top: 3px; }
+/* 分组胶囊收窄，不再肥大 */
+.market-aside .aside-sec-body .chip, .market-aside .chip {
+  padding: 2px 8px; font-size: 10.5px; line-height: 16px; gap: 4px; border-radius: 999px;
+}
+.market-aside .chip .gb-tag { font-size: 8.5px; padding: 0 3px; line-height: 12px; }
+.market-aside .chip .gb-rest { font-size: 10px; }
+.market-aside .chip .gb-mul { font-size: 9.5px; }
+
+/* 接管折叠箭头：隐藏原字符，只用 CSS chevron；旧 rotate 一并作废 */
+.market-aside .aside-sec-chev { font-size: 0; color: transparent; transform: none !important; overflow: hidden; }
+.market-aside .aside-sec-chev::before { font-size: 0; }
+
+/* 内容块整体在行内垂直居中：单行值（Token / 请求体大小 / 详情）与两行块共用同一视觉中心 */
+.logs .lg-row { align-items: center; padding: 6px 14px; }
+.logs .lg-cell-stack { min-height: 0; justify-content: center; }
+.logs .lg-cell-stack > span { line-height: 18px; }
+/* 横线严格居中在 18px 行盒里 */
+.logs .lg-dash { height: 18px; align-items: center; }
+.logs .lg-dash > i { margin: 0; }
+/* 单行值也走同一行盒 */
+.logs .lg-row > .lg-strong, .logs .lg-row > .num, .logs .lg-row > .lg-detail { height: 18px; display: inline-flex; align-items: center; }
+
+/* 横线精确落在数字墨迹中心（行盒内 10px，而非几何中点 9px） */
+.logs .lg-dash > i { margin-top: 1px; }
+.logs .lg-dash.in > i { margin-top: 0; }
+
+/* 复制按钮：方形描边图标，hover 提亮 */
+.mc .mc-copy {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border-radius: 8px;
+  border: 1px solid var(--nt-line); background: transparent; color: var(--nt-muted);
+  transition: color .15s ease, border-color .15s ease, background-color .15s ease;
+}
+.mc .mc-copy:hover { color: var(--nt-ink); border-color: var(--nt-accent); background: rgba(255,255,255,.05); }
+/* 详情与 状态/延迟/吞吐 同排：右对齐、字号略大、白色字 + 箭头 */
+.mc .mc-stats { align-items: center; }
+.mc .mc-more {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 3px;
+  font-size: 12.5px; font-weight: 600; color: var(--nt-ink); text-decoration: none;
+  padding: 2px 4px; border-radius: 6px; transition: color .15s ease, background-color .15s ease;
+}
+.mc .mc-more:hover { color: #fff; background: rgba(255,255,255,.06); }
+.mc .mc-more-arrow { font-size: 13px; color: var(--nt-muted); }
+.mc .mc-more:hover .mc-more-arrow { color: var(--nt-ink); }
+
+/* 两行块：内部两行 18px + 1px 间距，整体 37px，居中后与单行值同处行中线 */
+.logs .lg-cell-stack { min-height: 0; gap: 1px; justify-content: center; }
+.logs .lg-dash { height: 18px; align-items: center; }
+.logs .lg-dash > i { margin-top: 1px; }
+
+/* 横线再下移 0.5px，与数字墨迹中心完全重合（实测 delta=-0.5） */
+.logs .lg-dash > i { margin-top: 1.5px; }
+
+/* 推荐计划卡复制按钮：沿用模型卡片同款方形图标按钮 */
+.rf .rf-copy {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border-radius: 8px; flex: none;
+  border: 1px solid var(--nt-line); background: transparent; color: var(--nt-muted);
+  cursor: pointer; transition: color .15s ease, border-color .15s ease, background-color .15s ease;
+}
+.rf .rf-copy:hover { color: var(--nt-ink); border-color: var(--nt-accent); background: rgba(255,255,255,.05); }
+.rf .rf-copy svg { display: block; }
+/* 订单历史：蓝色文字 + 细箭头，与上游一致 */
+.tp-history {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  font-size: 12px; color: #6ea8ff; text-decoration: none;
+  padding: 3px 6px; border-radius: 7px;
+  transition: color .15s ease, background-color .15s ease;
+}
+.tp-history:hover { color: #9cc2ff; background: rgba(110,168,255,.12); }
+.tp-history svg { display: block; }
+
+/* 流列：蓝色「流」+ 灰色 t/s，和上游一致 */
+.logs .lg-flow { color: #4a9eff; line-height: 18px; }
+.logs .lg-sub { color: var(--nt-muted); }
+/* 模型行 + 映射按钮 */
+.logs .lg-model-row { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.logs .lg-map {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 20px; height: 20px; padding: 0; border-radius: 6px;
+  border: 1px solid transparent; background: transparent; color: var(--nt-faint);
+  cursor: pointer; transition: color .15s ease, background-color .15s ease;
+}
+.logs .lg-map:hover, .logs .lg-map.on { color: var(--nt-ink); background: rgba(255,255,255,.08); }
+.logs .lg-map svg { display: block; }
+/* 映射面板：贴在模型列下方 */
+.logs .lg-map-pop {
+  display: flex; flex-direction: column; gap: 4px;
+  margin-top: 4px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--nt-line); background: #1b1d22;
+  box-shadow: 0 10px 28px rgba(0,0,0,.45);
+  position: relative; z-index: 30;
+}
+.logs .lg-map-row { display: grid; grid-template-columns: 76px 1fr; gap: 8px; align-items: baseline; }
+.logs .lg-map-k { font-size: 10.5px; color: var(--nt-faint); }
+.logs .lg-map-v { font-size: 11px; color: var(--nt-ink); font-family: var(--nt-code); }
+
+/* 分组胶囊再压扁：高度 20px，左右内边距更小，倍率与徽标同步收紧 */
+.market-aside .chip,
+.market-aside .aside-sec-body .chip {
+  height: 20px; min-height: 0; padding: 0 7px; gap: 3px;
+  font-size: 10px; line-height: 18px; border-radius: 999px;
+}
+.market-aside .chip .gb-tag { font-size: 8px; line-height: 12px; padding: 0 3px; border-radius: 3px; }
+.market-aside .chip .gb-rest { font-size: 9.5px; line-height: 16px; }
+.market-aside .chip .gb-mul { font-size: 9px; line-height: 16px; color: var(--nt-faint); }
+
+/* 分组胶囊压扁：覆盖所有 .market-chip 形态（含 .group-chip / 行内变体） */
+.market-aside .market-chip,
+.market-aside .market-chip.group-chip,
+.market-aside .chips-row .market-chip {
+  min-height: 0 !important; height: 20px !important;
+  padding: 0 8px !important; gap: 4px !important;
+  font-size: 10px !important; line-height: 18px !important;
+  border-radius: 999px !important;
+}
+.market-aside .market-chip .gb { gap: 3px; }
+.market-aside .market-chip .gb-tag { font-size: 8px !important; line-height: 12px !important; padding: 0 3px !important; }
+.market-aside .market-chip .gb-rest { font-size: 9.5px !important; }
+.market-aside .market-chip .ratio { font-size: 9px !important; }
+/* 模型卡片里的模型胶囊：压到 22px，别和日志里一样厚 */
+.mc .mc-model-pill, .mc .lg-pill { height: 22px; padding: 0 9px; font-size: 11px; }
+
+/* 复制反馈：叠加对勾徽标，图标保持可见 */
+.mc .mc-copy, .rf .rf-copy { position: relative; overflow: visible; }
+.mc .mc-copy.copied, .rf .rf-copy.copied { color: #4cc38a; border-color: rgba(76,195,138,.6); }
+.mc .mc-copy.copyfail, .rf .rf-copy.copyfail { color: #e06b7a; border-color: rgba(224,107,122,.6); }
+.copy-badge {
+  position: absolute; right: -4px; bottom: -4px;
+  min-width: 12px; height: 12px; padding: 0 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px; background: #1b1d22; border: 1px solid currentColor;
+  font-size: 8px; line-height: 1; color: inherit;
+}
+
+/* 折叠标题：不要整行高光块，只在文字变色 */
+.market-aside .aside-sec-head { background: transparent !important; border-radius: 0; }
+.market-aside .aside-sec-head:hover, .market-aside .aside-sec-head:focus { background: transparent !important; }
+.market-aside .aside-sec-head:hover .aside-sec-title { color: var(--nt-ink); }
+.market-aside .aside-sec.open .aside-sec-head, .market-aside .aside-sec:not(.closed) .aside-sec-head { background: transparent !important; }
+/* 供应商：横向两列排布，收紧高度，窄容器下也不超限 */
+.market-aside .market-chips.vendor-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 6px; width: 100%;
+}
+.market-aside .market-chips.vendor-grid .market-chip {
+  width: 100%; min-width: 0; max-width: 100%;
+  height: 24px; padding: 0 8px; gap: 5px; font-size: 10px;
+  justify-content: flex-start; overflow: hidden;
+}
+.market-aside .market-chips.vendor-grid .market-chip .label,
+.market-aside .market-chips.vendor-grid .market-chip > span:not(.ratio) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.market-aside .market-chips.vendor-grid .vendor-icon { width: 13px; height: 13px; flex: none; }
+.market-aside .market-chips.vendor-grid .ratio { font-size: 9px; flex: none; }
+@media (max-width: 360px) {
+  .market-aside .market-chips.vendor-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 侧栏滚动条：默认隐藏，滚动时才出现（对齐主站） */
+.market-aside {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color .25s ease;
+}
+.market-aside:hover { scrollbar-color: rgba(255,255,255,.18) transparent; }
+.market-aside::-webkit-scrollbar { width: 6px; }
+.market-aside::-webkit-scrollbar-track { background: transparent; }
+.market-aside::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; transition: background-color .25s ease; }
+.market-aside:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); }
+.market-aside::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.3); }
+/* 滚动条贴到侧栏左侧：留出左侧内边距，把滚动条推过去 */
+.market-aside { direction: rtl; }
+.market-aside > * { direction: ltr; }
+
+/* 已启用/未启用：胶囊 + 状态圆点（启用绿点、未启用红点），和页头「已连接」同款 */
+.mc .mc-flag {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  height: 22px; padding: 0 9px; border-radius: 999px;
+  border: 1px solid var(--nt-line); background: rgba(255,255,255,.03);
+  font-size: 10.5px; color: var(--nt-muted);
+}
+.mc .mc-flag .mc-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: currentColor; }
+.mc .mc-flag.on { color: #4cc38a; border-color: rgba(76,195,138,.45); background: rgba(76,195,138,.1); }
+.mc .mc-flag.on .mc-dot { background: #4cc38a; }
+.mc .mc-flag.off { color: #e06b7a; border-color: rgba(224,107,122,.45); background: rgba(224,107,122,.1); }
+.mc .mc-flag.off .mc-dot { background: #e06b7a; }
+
+/* 列表模式：整表样式（对齐原站 pricing 列表） */
+.model-grid.as-list {
+  display: flex; flex-direction: column; gap: 0;
+  border: 1px solid var(--nt-line); border-radius: 12px; overflow: hidden;
+  background: rgba(255,255,255,.015);
+}
+.model-grid.as-list .ml-head,
+.model-grid.as-list .ml-row {
+  display: grid;
+  grid-template-columns: 1.55fr .78fr 1.15fr .72fr 1.05fr .8fr 1.15fr 1.55fr;
+  align-items: center; gap: 10px; padding: 10px 14px;
+}
+.model-grid.as-list .ml-head {
+  border-bottom: 1px solid var(--nt-line);
+  font-size: 10.5px; color: var(--nt-muted);
+}
+.model-grid.as-list .ml-row { border-bottom: 1px solid rgba(255,255,255,.05); cursor: pointer; transition: background-color .12s; }
+.model-grid.as-list .ml-row:last-child { border-bottom: 0; }
+.model-grid.as-list .ml-row:hover { background: rgba(255,255,255,.035); }
+.model-grid.as-list .ml-row.off { opacity: .45; }
+.model-grid.as-list .ml-cell { min-width: 0; font-size: 11.5px; overflow: hidden; }
+.model-grid.as-list .ml-model { display: inline-flex; align-items: center; gap: 6px; color: var(--nt-ink); }
+.model-grid.as-list .ml-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.model-grid.as-list .ml-sort { margin-left: auto; color: var(--nt-faint); font-size: 9px; }
+.model-grid.as-list .ml-type { font-size: 11px; }
+.model-grid.as-list .ml-type.dyn { color: #e0a44a; }
+.model-grid.as-list .ml-type.flat { color: #4a9eff; }
+.model-grid.as-list .ml-price { display: grid; grid-template-columns: auto auto; gap: 0 8px; line-height: 16px; }
+.model-grid.as-list .ml-p-in, .model-grid.as-list .ml-p-out { font-size: 11px; color: var(--nt-ink); }
+.model-grid.as-list .ml-p-unit { grid-column: 1 / -1; font-size: 9.5px; color: var(--nt-faint); }
+.model-grid.as-list .ml-cache { font-size: 11px; color: var(--nt-ink); }
+.model-grid.as-list .ml-vendor { display: inline-flex; align-items: center; gap: 5px; color: #4a9eff; }
+.model-grid.as-list .ml-vicon { width: 13px; height: 13px; object-fit: contain; flex: none; }
+.model-grid.as-list .ml-tags, .model-grid.as-list .ml-ends { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.model-grid.as-list .ml-tag { font-size: 9.5px; padding: 0 5px; border-radius: 4px; background: rgba(255,255,255,.07); color: var(--nt-muted); }
+.model-grid.as-list .ml-end { font-size: 10px; color: #e0a44a; }
+.model-grid.as-list .ml-end:last-of-type { color: #4a9eff; }
+.model-grid.as-list .ml-groups { display: inline-flex; align-items: center; gap: 4px; }
+.model-grid.as-list .ml-gb { display: inline-flex; min-width: 0; overflow: hidden; }
+.model-grid.as-list .ml-more { font-size: 10px; color: var(--nt-muted); flex: none; }
+
+.model-grid.as-list .ml-dash { display: inline-flex; align-items: center; height: 16px; }
+.model-grid.as-list .ml-dash > i { display: block; width: 9px; height: 1.5px; border-radius: 1px; background: var(--nt-muted); opacity: .6; }
+.model-grid.as-list .ml-vicon-fb { display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; border-radius: 3px; background: rgba(127,127,127,.25); }
+
+/* 端点只占一行：不换行、超长省略 */
+.model-grid.as-list .ml-ends {
+  display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+  overflow: hidden; white-space: nowrap;
+}
+.model-grid.as-list .ml-end { flex: none; max-width: 88px; overflow: hidden; text-overflow: ellipsis; }
+/* 分组：单行，胶囊内部截断，组内文字用省略号而不是硬切 */
+.model-grid.as-list .ml-groups {
+  display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 4px;
+  overflow: hidden; min-width: 0;
+}
+.model-grid.as-list .ml-gb {
+  flex: 0 1 auto; min-width: 0; max-width: 108px;
+  overflow: hidden; white-space: nowrap;
+}
+.model-grid.as-list .ml-gb > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-grid.as-list .ml-gb .gb-tag { flex: none; }
+.model-grid.as-list .ml-gb .gb-rest { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-grid.as-list .ml-more { flex: none; font-size: 10px; color: var(--nt-muted); }
+
+/* 价格：上行「输入 X  输出 Y」，下行「CNY / 1M Token」 */
+.model-grid.as-list .ml-price { display: flex; flex-direction: column; gap: 2px; line-height: 17px; }
+.model-grid.as-list .ml-p-line { display: inline-flex; align-items: baseline; gap: 5px; }
+.model-grid.as-list .ml-p-k { font-size: 10.5px; color: var(--nt-muted); }
+.model-grid.as-list .ml-p-v { font-size: 11.5px; color: var(--nt-ink); margin-right: 12px; }
+.model-grid.as-list .ml-p-unit { font-size: 9.5px; color: var(--nt-faint); }
+/* 缓存：上行金额，下行 / 1M */
+.model-grid.as-list .ml-cache { display: flex; flex-direction: column; gap: 2px; line-height: 17px; }
+.model-grid.as-list .ml-c-v { font-size: 11.5px; color: var(--nt-ink); }
+.model-grid.as-list .ml-c-unit { font-size: 9.5px; color: var(--nt-faint); }
+
+/* 列宽改为 7 列（去掉标签），价格/缓存文字不换行 */
+.model-grid.as-list .ml-head,
+.model-grid.as-list .ml-row {
+  grid-template-columns: 1.5fr .8fr 1.25fr .7fr 1.05fr 1fr 1.5fr;
+}
+.model-grid.as-list .ml-p-k,
+.model-grid.as-list .ml-p-v,
+.model-grid.as-list .ml-c-v,
+.model-grid.as-list .ml-c-unit,
+.model-grid.as-list .ml-type { white-space: nowrap; }
+.model-grid.as-list .ml-p-line { flex-wrap: nowrap; }
+
+/* 分组：胶囊完整自然宽度，容器裁边，+N 不裁（对齐原站 OverflowList 语义） */
+.model-grid.as-list .ml-groups {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 4px;
+  min-width: 0; max-width: 100%; overflow: hidden;
+}
+.model-grid.as-list .ml-gb { flex: 0 0 auto !important; max-width: none !important; overflow: visible !important; white-space: nowrap; }
+.model-grid.as-list .ml-gb > * { min-width: 0; white-space: nowrap; overflow: visible; text-overflow: clip; }
+.model-grid.as-list .ml-more {
+  flex: 0 0 auto; padding: 0 6px; height: 20px; line-height: 18px;
+  border-radius: 999px; background: rgba(255,255,255,.08);
+  font-size: 10px; color: var(--nt-muted); white-space: nowrap;
+}
+
+/* 订单历史：实心按钮（与「去支付」同组尺寸），不再是无底蓝色文字 */
+.tp-head .tp-history {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  height: 32px; padding: 0 12px; border-radius: 9px;
+  border: 1px solid var(--nt-line); background: rgba(255,255,255,.04);
+  color: var(--nt-ink); font-size: 12px; text-decoration: none; cursor: pointer;
+  transition: border-color .15s ease, background-color .15s ease, color .15s ease;
+}
+.tp-head .tp-history:hover { border-color: var(--nt-accent); background: rgba(255,255,255,.08); color: var(--nt-ink); }
+.tp-head .tp-history svg { display: block; color: var(--nt-muted); }
+.tp-head .tp-history:hover svg { color: var(--nt-ink); }
+
+/* 「· 节省 N」用绿色，圆点同色（与上游一致） */
+.tp-tile .tp-save { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; color: #4cc38a; font-size: 10px; }
+.tp-tile .tp-save .tp-dot { width: 3px; height: 3px; border-radius: 50%; background: #4cc38a; flex: none; }
+
+/* 推荐计划图标：圆形底 + 分享图标 */
+.rf .rf-ico {
+  width: 34px; height: 34px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(155,124,224,.16); color: #b9a6ff; flex: none;
+}
+.rf .rf-ico svg { display: block; }
+
+/* 整页控件统一胶囊圆角（对齐上游），不再有方角小圆角 */
+.home-grid .card, .home-wide, .tabs, .tabs button,
+.tp-tile, .tp-head .tp-history, .tp-head button.primary,
+.tp-custom-row input, .tp-field input, .rf-link,
+.rf .rf-copy, .board-seg, .board-seg button,
+.card button, .card .ghost, .card .primary, .chip {
+  border-radius: 999px;
+}
+/* 输入框保持胶囊但保留内边距 */
+.tp-custom-row input, .tp-field input, .rf-link { padding-left: 14px; padding-right: 14px; }
+/* 大卡片本身用较大圆角，不要变胶囊（内容多） */
+.home-grid .card, .home-wide { border-radius: 18px; }
+/* 分段控件（日/周/月）胶囊化 */
+.board-seg { padding: 3px; }
+.board-seg button { border-radius: 999px; }
+
+/* 「¥196 · 节省 4」整行同一基线：金额、圆点、节省文字都按 14px 行盒对齐 */
+.tp-tile .tp-pay {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  line-height: 14px; font-size: 10px;
+}
+.tp-tile .tp-pay > span:first-child { line-height: 14px; }
+.tp-tile .tp-save { align-items: baseline; margin-left: 0; line-height: 14px; font-size: 10px; }
+.tp-tile .tp-save .tp-dot { align-self: center; margin-top: 1px; }
+
+/* 金额档位恢复原本的圆角矩形（10px），不要大胶囊 */
+.tp-tile { border-radius: 10px !important; }
+
+/* 自定义金额 / 待支付金额：应用胶囊设计 */
+.tp-custom-row .tp-field,
+.tp-custom-row .tp-due { border-radius: 999px; border: 1px solid var(--nt-line); background: rgba(0,0,0,.22); }
+.tp-custom-row .tp-field { height: 40px; padding: 0 6px 0 14px; }
+.tp-custom-row .tp-field input { border: 0; background: transparent; height: 38px; border-radius: 999px; }
+.tp-custom-row .tp-due { height: 40px; padding: 0 16px; }
+.tp-custom-row .tp-due b { font-size: 13px; }
+
+/* 订单历史：可用时与「去支付」等高（32px）；去支付不可用时只缩 2px，避免灰态显大 */
+.tp-head .tp-history { height: 32px; padding: 0 13px; border-radius: 999px; font-size: 12px; }
+.tp-head .tp-history.dim { height: 30px; padding: 0 12px; }
+.tp-head .tp-pay-btn { height: 32px; padding: 0 16px; border-radius: 999px; font-size: 12.5px; }
+
+/* 自定义金额/待支付金额：与兑换码输入框同高（36px），不再显肥 */
+.tp-custom-row .tp-field,
+.tp-custom-row .tp-due { height: 36px; }
+.tp-custom-row .tp-field input { height: 34px; }
+.tp-custom-row .tp-field { padding: 0 4px 0 12px; }
+.tp-custom-row .tp-due { padding: 0 14px; }
+/* 兑换码输入框也统一胶囊 */
+.tp-input { height: 36px; border-radius: 999px; padding: 0 14px; }
+
+/* 代金券：总额行 + 胶囊化列表 */
+.home-grid .voucher-total,
+.card .voucher-total {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 6px 0 8px; font-size: 11.5px;
+}
+.card .voucher-total .vt-k { color: var(--nt-muted); }
+.card .voucher-total .vt-v { color: var(--nt-ink); font-family: var(--nt-code); font-weight: 600; }
+.card .vouchers { display: flex; flex-direction: column; gap: 6px; }
+.card .voucher {
+  display: flex; align-items: center; gap: 8px;
+  height: 34px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--nt-line); background: rgba(255,255,255,.02);
+}
+.card .voucher .who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
+.card .voucher .vname { font-size: 11.5px; color: var(--nt-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .voucher .amt { flex: none; font-family: var(--nt-code); font-size: 11.5px; color: #e0a44a; }
