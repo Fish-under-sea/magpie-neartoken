@@ -2240,14 +2240,15 @@
           el('i', { style: 'width:' + Math.max(2, Math.round((m.tokens / total) * 100)) + '%;background:' + ['#5b8def', '#43b8a4', '#9b7ce0', '#54b26a', '#e0a44a', '#d47a9a', '#6fa8d6', '#c08bd0'][i2 % 8] })),
         el('div', { class: 'lg-dist-val', text: compact(m.tokens) + ' · ' + Math.round((m.tokens / total) * 100) + '%' })))) : null
 
-    // 没有逐条数据源时说清原因：插件还没拿到凭据 / 接口失败 / 站点没给
+    // 没有逐条数据源时说清原因，并且要说成「差哪一步」，不是一句「读取失败」
     const meta = self.NEARTOKEN_LOGS_META
     const why = (() => {
       if (hasLiveSource) return ''
-      if (!meta || !meta.at) return '逐条流水还没写入：插件尚未拿到站点凭据。在插件页重新连接一次即可补齐。'
-      if (meta.ok === false) return '逐条流水读取失败：' + (meta.error || '未知原因') + '。'
-      if (meta.stage === 'no-auth') return '逐条流水还没写入：插件尚未拿到站点凭据。在插件页重新连接一次，或让 magpie 发一次请求即可自动补齐。'
-      if (meta.stage === 'no-key') return '逐条流水还没写入：凭据里没有可用的令牌，请重新连接。'
+      const stage = meta && meta.stage
+      if (stage === 'no-auth' || stage === 'no-key' || !meta || !meta.at) {
+        return '逐条流水要一把站点令牌才读得到，插件进程还没拿到：在 magpie 里发一次 NearToken 请求、打开 magpie 的「用量」页一次，或在插件页重新连接，任一动作之后这里会自动补齐。'
+      }
+      if (meta.ok === false) return '逐条流水这次没读到：' + (meta.error || '未知原因') + '（插件会每分钟重试）。'
       return '逐条流水为空：站点这条令牌暂时没有记录。'
     })()
     return el('section', { class: 'logs' },

@@ -40,6 +40,19 @@ const pricingEnv = {
 }
 globalThis.fetch = async (url) => {
   const u = String(url)
+  if (u.includes('/api/log/token')) {
+    return {
+      ok: true,
+      text: async () => JSON.stringify({
+        success: true,
+        data: [{
+          created_at: 1793990000, token_name: 'Magpie', model_name: 'm1', group: 'G-cheap',
+          quota: 500000, prompt_tokens: 10, completion_tokens: 20, use_time: 1.5,
+          is_stream: true, request_size: 128, other: '{}',
+        }],
+      }),
+    }
+  }
   if (u.includes('/api/pricing')) return { ok: true, text: async () => JSON.stringify(pricingEnv) }
   if (u.includes('/api/status')) return { ok: true, text: async () => '{"success":true,"data":{}}' }
   throw new Error('offline')
@@ -112,5 +125,26 @@ test('页面侧启停不再参与过滤，模型表始终是全量', async () =>
 test('分组头由 fetch 注入，模型自身也带一份', async () => {
   const m = await models({})
   assert.equal(m.m1.headers['x-neartoken-group'], '#1')
+})
+
+test('宿主在 models 钩子里递来的 auth 会被用来抓逐条日志', async () => {
+  // host.js：ph.models(given, { auth: authCopy(k) })——重列模型这个动作本身就把令牌送来，
+  // 逐条日志因此不依赖 reconnect，也不依赖宿主另开通道。
+  const pageDir = path.join(dir, 'page')
+  const logsPath = path.join(pageDir, 'logs.js')
+  fs.writeFileSync(logsPath, 'self.NEARTOKEN_LOGS = { at: 0, rows: [] }\n')
+
+  const p = await mod.default({}, {})
+  await p.provider.models(undefined, { auth: { type: 'oauth', access: 'sk-test-token' } })
+
+  const deadline = Date.now() + 3000
+  let body = ''
+  while (Date.now() < deadline) {
+    body = fs.readFileSync(logsPath, 'utf8')
+    if (/"model":"m1"/.test(body)) break
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  assert.match(body, /"model":"m1"/, '宿主递来的 auth 应让 logs.js 写入逐条流水')
+  assert.match(body, /"tokenName":"Magpie"/, '字段要按站点原样归一化')
 })
 

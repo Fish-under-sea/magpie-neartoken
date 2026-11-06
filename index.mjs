@@ -966,15 +966,26 @@ export default async function neartoken(input, options) {
       id: PROVIDER_ID,
       /**
        * 模型表：一个「分组 × 模型」一行。
+       *
+       * 宿主调用这个钩子时会带第二个参数：`{ auth, signal }`，其中的 auth 是
+       * 插件凭据的副本（host.js：`ph.models(given, { auth: authCopy(k) })`）。
+       * 也就是说「宿主重列模型」这个动作本身就会把令牌送到插件手上——逐条日志
+       * 不需要等 reconnect，也不需要宿主另开通道。
        * @returns {Promise<Record<string, object>>}
        */
-      async models() {
+      async models(_given, ctx) {
+        // 先收下宿主递来的令牌：它比「连接那一刻」可靠得多（重启后依然有）
+        try {
+          const a = ctx?.auth
+          const k = (a && (a.access || a.key)) || ''
+          if (typeof k === 'string' && k.trim()) sessionKey = k.trim()
+        } catch { /* auth 形状不对就继续用已有的 */ }
         // 版本探测放到后台：它要访问 npm registry，绝不能挡住宿主列举模型
         try { void stampLatest() } catch { /* 版本探测失败不影响模型表 */ }
         // 宿主要模型表是高频动作：凭据拿到之后顺手补一次逐条日志（60 秒节流）。
         // 有些使用路径从不触发余额卡片，没有这一条日志就永远不刷新。
         try {
-          if (authGetter && Date.now() - logsAskedAt > 60_000) {
+          if ((authGetter || sessionKey) && Date.now() - logsAskedAt > 60_000) {
             logsAskedAt = Date.now()
             fetchLogs('models').catch(() => {})
           }
