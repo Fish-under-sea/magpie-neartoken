@@ -1,6 +1,6 @@
 {
   "name": "@fish-under-sea/magpie-neartoken",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "NearToken for magpie: an independently installed provider and page plugin with device authorization, one row per model, group routing, balance, usage and top-ups.",
   "type": "module",
   "main": "index.mjs",
@@ -62,6 +62,6 @@
       "neartoken:topup",
       "neartoken:prefs"
     ],
-    "min": "2.2.2"
+    "min": "2.3.1"
   }
 }

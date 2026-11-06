@@ -149,9 +149,13 @@ if (/tts|asr|text-to-speech|speech|suno|语音|转文字/i.test(groups)) return 
 
 `kindOutput('audio')` 与 `kindOutput('embedding')` 仍带 `text: true`，所以在不认 `kind` 的老宿主上，这些模型至少还能当对话模型看到，不会被彻底丢掉。
 
-### 待办：`magpie.min`
+### `magpie.min` 已抬到 2.3.1
 
-`package.json` 的 `magpie.min` 仍是 `2.2.2`。等含 fish.25 的宿主版本发布后，抬到该版本号，老宿主上这些模型才会从对话列表里让出去。
+宿主 2.3.1（`v0.1.3207+fish.26`）落地了 #42 的插件 kind 接入，`magpie.min` 相应从 `2.2.2` 抬到 `2.3.1`。
+
+需要说明一点实测结论：**宿主当前的清单解析根本不读 `min` 这个字段**。`internal/plugin/page.go` 解 `magpie` 段时只认 `page` / `panels` / `actions` / `permissions` / `calls`，没有 `min`。所以它不影响装不装得上，作用只是把「最低需要 2.3.1」这件事写在清单里给人看。
+
+真正决定行为的是宿主版本：2.3.1 起 `plugin.Model.Kind` 生效，老宿主上这些模型仍按对话模型显示（`kindOutput` 保留 `text: true` 就是为了这个）。
 
 ## 1.1.7 删掉自动检查更新与热重载
 
