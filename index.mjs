@@ -568,6 +568,13 @@ async function stampLatest() {
 /** 缓存 getAuth：定时同步邀请数时要用到站点钥匙。 */
 let authGetter = null
 function rememberAuth(getAuth) { if (typeof getAuth === 'function') authGetter = getAuth }
+/**
+ * sessionKey 是本次连接拿到的令牌（只放内存，不落盘）。
+ *
+ * 宿主只在「要余额」或「发请求」时才会把 getAuth 递进来，很多使用路径两样都不发生，
+ * 于是逐条日志永远拿不到钥匙。连接成功那一刻令牌本来就在手上，留一份够本进程用。
+ */
+let sessionKey = ''
 
 /**
  * fetchAff 主动拉一次站点用户资料，把邀请数/推荐码写进 page/aff.js。
@@ -687,14 +694,21 @@ async function readQuotaPerUnit() {
 }
 
 async function fetchLogs(trigger = 'tick') {
-  // 凭据只在宿主要余额或发请求时才会递进来；没拿到就把原因写出来，别静默失败。
-  if (!authGetter) {
-    writeLogsMeta({ ok: false, stage: 'no-auth', trigger, rows: 0, error: '还没拿到站点凭据' })
+  // 钥匙有两个来源：宿主递进来的 getAuth（usage / loader 钩子），
+  // 或者刚刚连接时自己拿到的那把（sessionKey）。两样都没有就写原因，别静默失败。
+  if (!authGetter && !sessionKey) {
+    writeLogsMeta({ ok: false, stage: 'no-auth', trigger, rows: 0, error: '还没拿到站点凭据（宿主尚未调用余额或请求钩子）' })
     return
   }
   try {
-    const auth = await authGetter()
-    const key = auth?.access || auth?.key || ''
+    let key = sessionKey
+    if (authGetter) {
+      try {
+        const auth = await authGetter()
+        const fromHost = auth?.access || auth?.key || ''
+        if (fromHost) key = fromHost
+      } catch { /* 宿主没给就继续用连接时那把 */ }
+    }
     if (!key) {
       writeLogsMeta({ ok: false, stage: 'no-key', trigger, rows: 0, error: '凭据里没有可用的令牌' })
       return
@@ -863,7 +877,10 @@ export default async function neartoken(input, options) {
               const env = await call('/api/dsh/device/token', { method: 'POST', body: { device_code: pending.deviceCode } })
               if (env?.success === true) {
                 const grant = grantOf(env.data)
+                sessionKey = grant.access || ''
                 pending = null
+                // 刚一登进来就把逐条日志补齐，不必等背景定时器
+                fetchLogs('connect').catch(() => {})
                 return grant
               }
               switch (env?.message) {
