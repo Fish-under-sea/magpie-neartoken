@@ -159,13 +159,27 @@ const ratioOf = (ratios, name) => (Number(ratios?.[name]) > 0 ? Number(ratios[na
  *   ASR / Suno → 语音，向量模型分组 → 向量，其余 → 对话。
  */
 function kindOf(row) {
-  const ends = Array.isArray(row?.supported_endpoint_types) ? row.supported_endpoint_types : []
-  const groups = Array.isArray(row?.enable_groups) ? row.enable_groups.join(' ') : ''
-  const text = (String(row?.model_name || '') + ' ' + groups + ' ' + String(row?.description || '')).toLowerCase()
+  const ends = (Array.isArray(row?.supported_endpoint_types) ? row.supported_endpoint_types : []).map((x) => String(x))
+  const groupNames = Array.isArray(row?.enable_groups) ? row.enable_groups.map((g) => String(g ?? '')).join(' ') : ''
+  const groups = groupNames.toLowerCase()
+  const name = String(row?.model_name || '')
+  const desc = String(row?.description || '')
+
   if (ends.includes('image-generation')) return 'image'
-  if (ends.includes('openai-video') || /(^|[-_])video([-_]|$)|veo|seedance|sora|kling/i.test(text)) return 'video'
-  if (/tts|text-to-speech|asr|speech|whisper|suno|audio|语音|转文字/i.test(text)) return 'audio'
-  if (/embedding|embed|rerank|向量/i.test(text)) return 'embedding'
+  if (ends.includes('openai-video')
+    || /(^|[-_])video([-_]|$)|veo|seedance|sora|kling/i.test(name + ' ' + groupNames + ' ' + desc)) return 'video'
+
+  // 语音：只看输出侧。端点类型或分组名说了算，模型名不参与——
+  // gpt-4o-audio-preview 这类「能听音频、输出仍是文本」的对话模型不能被卷进来。
+  if (ends.some((e) => /^(audio|tts|asr|transcription|speech)$/i.test(e))) return 'audio'
+  if (/tts|asr|text-to-speech|speech|suno|语音|转文字/i.test(groups)) return 'audio'
+
+  // 向量：同样以端点类型与分组为准；模型名只认完整的 embedding 词，
+  // 不用裸 embed（那会把其它词里的 embed 也算进去）。
+  if (ends.some((e) => /^(embedding|jina-rerank|rerank)$/i.test(e))) return 'embedding'
+  if (/embedding|向量|rerank/i.test(groups)) return 'embedding'
+  if (/embedding/i.test(name)) return 'embedding'
+
   return 'chat'
 }
 
