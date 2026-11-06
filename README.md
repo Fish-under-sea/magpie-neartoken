@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**1.1.3**。这是 NearToken 独立 npm 包的版本；magpie 定制宿主的对接要求见 [`docs/HOST-接口对接.md`](docs/HOST-接口对接.md)，宿主升级目标 **2.2.2** 属于另一仓库和发行物。
+当前版本：**1.1.4**。这是 NearToken 独立 npm 包的版本；magpie 定制宿主的对接要求见 [`docs/HOST-接口对接.md`](docs/HOST-接口对接.md)，宿主升级目标 **2.2.2** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.1.3.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.1.4.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -107,6 +107,19 @@
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
 
+## 1.1.4 日志凭据改由宿主重列送来 · 空态说人话
+
+1.1.3 只从 `auth.usage` / `auth.loader` 取令牌，实测这两条在普通使用路径上都不会跑（`logs-meta` 长期 `no-auth`）。
+
+真正的通道在宿主 `host.js:2060`：
+
+```js
+ph.models(given, { auth: authCopy(k), signal })
+```
+
+**宿主每次列举模型（启动首列、每小时重列、手动「获取模型」）都会把凭据副本一起递进来。** 插件的 `models(_given, ctx)` 现在先收下 `ctx.auth.access`，再抓一次逐条日志——所以「刷新模型」这个动作本身就足以补齐日志，不需要 reconnect，也不需要宿主另开通道。
+
+同时把日志空态从「读取失败」改成说清差哪一步，并给出可执行动作。
 ## 1.1.3 页面刷新不再每分钟敲一次宿主 · 日志凭据自备
 
 ### 「页面隔一会刷新一下」的真身
