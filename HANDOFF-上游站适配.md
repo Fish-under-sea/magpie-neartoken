@@ -1,7 +1,8 @@
 # HANDOFF · NearToken 接口核验与待确认事项
 
-> 核验日期：2026-11-05（Asia/Shanghai）；本次补校对覆盖用户提供的初版问题截图。
-> 插件：`@fish-under-sea/magpie-neartoken`；当前本地基线为 0.6.5，HEAD `4d3ab9d`。下文 0.6.3 / 0.6.4 保留为问题与修复发生的历史版本。
+> 核验日期：2026-11-05（Asia/Shanghai）；2026-11-06 追加核对日志接口与宿主契约，并更新到 1.0.1。
+> 插件：`@fish-under-sea/magpie-neartoken`；当前基线 **1.0.1**，HEAD `ace4fae`。下文 0.6.3 / 0.6.4 保留为问题与修复发生的历史版本。
+> 2026-11-06 追加的三条实测事实见 §8：日志接口鉴权边界、额度换算参数、宿主 `prefs` 与 `usage.rows` 契约。
 > 本文替换 2026-11-04 版，并补正上一轮仍遗漏的站点源码信息。区分截图源码依据、本地直接代码核验与真实账户联调，不混用证据。
 > 下文保留的匿名请求结果、issue 状态及「本轮修复」描述均指前次 0.6.4 阶段的审计记录；本次仅补校对和 magpie 命名迁移要求，未重查远端或修改运行代码。
 
@@ -61,9 +62,9 @@
 | 设备授权令牌 | 插件把设备授权返回值保存为 `auth.access`，向 wallet 发送 Bearer。仅凭字段名或匿名 401，不能判定所有用户接口的鉴权能力。 |
 | 宿主连接推广参数 | `connect(params)` 已读取 `params.affCode`，`authorize()` 经 `withAffiliate()` 给确认 URL 加参数。0.6.3 页面却传 `{}`；本轮修复为 `{ affCode: AFF_CODE }`。这是插件漏传，不是已证实的宿主丢参。 |
 | 页面兑换按钮 | 0.6.3 只调用提示函数，未发送兑换请求。宿主分派和插件 `magpie.calls` 都没有 `neartoken:redeem`。因此没有发生真实兑换，并不能据此认定站点没有兑换接口。 |
-| 宿主邀请字段 | 被审补丁的 `View` / `Account` 未定义邀请数、本人推荐码或邀请奖励；wallet 解码仅保留余额、已用与 `group_credits`。这是宿主转换层的遗漏，不能反推服务端原始 JSON 没有字段。 |
+| 宿主邀请字段 | 被审补丁的 `View` / `Account` 未定义邀请数、本人推荐码或邀请奖励；wallet 解码仅保留余额、已用与 `group_credits`。这是宿主转换层的遗漏，不能反推服务端原始 JSON 没有字段。**1.0.1 现状**：插件侧已由 `writeAff()` 独立拉取 `/api/user/self` 与 `/api/dsh/device/wallet` 写 `page/aff.js`，页面读该脚本，不再只依赖宿主 `summarize`。 |
 | 供应商交接 | 被审补丁已包含 `pluginOwnsProvider()`、`keepGrant()`、`handOver()`。#22 已关闭；再次出现症状应核对安装版本和运行态，不能继续断言所有版本都无条件创建重复供应商。 |
-| 分组目录 | #23 已关闭，维护者说明已加入 `groupList` / `tokenName`。当前插件模型广场实际读取 `NEARTOKEN_PRICING.groups`，并非优先读取 `view.groupList`。 |
+| 分组目录 | #23 已关闭，维护者说明已加入 `groupList` / `tokenName`。插件模型广场仍读 `NEARTOKEN_PRICING.groups`（快照），1.0.1 另在日志页用同一快照 `groups` 显示分组倍率。 |
 
 ## 3. 匿名端点探测的证明范围
 
@@ -77,6 +78,8 @@
 旧版对 `/api/user/aff`、`/api/user/topup`、`/api/redemption/` 的匿名 401，同样不构成设备令牌测试。旧版指定 `/api/redemption/` 为用户兑换入口缺乏证据，撤回该判断；应先定位当前钱包前端真实发出的请求方法、路径和请求体。
 
 **本轮没有验证**：设备令牌访问用户端点的权限、成功 wallet 的完整字段、有效兑换码效果、注册后的推荐归属。上述事项保留为待验证，不记为站点缺陷。
+
+2026-11-06 追加探测的日志端点（`/api/log/token`、`/api/log/self`、`/api/log/self/stat`、`/api/user/self/logs`）结论见 **§8.1**：日志端点认 API key，属于插件可自行完成的能力，不是上游缺口。
 
 ## 4. 邀请数据与推荐归属
 
@@ -140,5 +143,67 @@
 | #25 | 保留用户的同步 / 掉列表现象；撤回未证实的统一根因、固定 104 行及「点筛选组即可切换路由」断言，要求按实际版本复现。 |
 | #26 | 聚焦邀请字段透传及账户归属；纠正鉴权、字段兼容和刷新周期承诺。 |
 | #27 | 聚焦待确认的兑换桥接契约；推广参数漏传属于插件，本轮已修。 |
+| #33 | 需求：`neartoken:prefs` 持久化通道 + `neartoken:usage` 的 `rows`。**插件侧 1.0.1 已补齐**（calls、op 协议、hiddenGroups/pinned、min 门槛、空态）；宿主侧按 A 方案落盘并在 `pluginCatalog` 过滤。原 #28 已并入本条并删除。 |
+| 日志接口 | 实测 `/api/log/token` 认 API key（见 §8.1），逐条流水由插件自行拉取；无需站点新增接口。真机权限仍需验收。 |
 
 验收应分别记录：公开 GET 事实、代码静态事实、使用有效设备令牌的集成结果、真实账户 UI 结果。代码检查和 mock 预览通过，不冒充真实宿主 / 真实账户联调通过。
+
+## 8. 2026-11-06 追加：日志接口、额度换算与宿主契约
+
+本节全部为**匿名探测 + 本地代码核对**，没有使用真实账户令牌，也没有消费额度。结论标注证据强度，不把探测结果当成站点承诺。
+
+### 8.1 日志接口的鉴权边界（实测）
+
+| 请求 | 无凭据 | 带无效 Bearer | 结论 |
+| --- | --- | --- | --- |
+| `GET /api/log/token?p=0&page_size=5` | 401 `Token not provided` | 401 `Invalid token` | **按 API key 鉴权**：端点存在且解析 `Authorization`，无 key 与错 key 的报错不同 |
+| `GET /api/log/self?p=0&page_size=5` | 401 `AUTH_UNAUTHORIZED` | 401 `AUTH_UNAUTHORIZED` | 认**登录会话**，不认 relay key |
+| `GET /api/log/self/stat` | 401 `AUTH_UNAUTHORIZED` | 同上 | 统计接口同理 |
+| `GET /api/user/self/logs` | 404 `Invalid URL` | 404 | 该路径不存在 |
+
+**结论**：逐条流水应由插件用自己那把 `sk-` 令牌走 `/api/log/token`，不需要站点新增接口，也不需要 dashboard 会话。这是**宿主/插件侧可自行完成**的能力，不是上游缺口。1.0.1 已按此实现（`fetchLogs()` 优先 `/api/log/token`，兜底 `/api/log/self`）。
+
+**未验证**：真实令牌下的完整字段集。字段映射按 new-api 常见写法做了多重兜底（`prompt_tokens`/`completion_tokens`/`use_time`/`quota` 均有 `other.*` 二级回退），若真机字段不同，需按实际响应调整。
+
+### 8.2 额度换算与货币（实测）
+
+`GET /api/status` 匿名可得，实测值：
+
+| 字段 | 值 | 用途 |
+| --- | --- | --- |
+| `quota_per_unit` | **500000** | 费用 = `quota / quota_per_unit` |
+| `price` | 1 | 单价基准 |
+| `custom_currency_symbol` | `¤` | 站点未用 `¥` 占位符；页面按 ¥ 显示 |
+| `custom_currency_exchange_rate` | 1 | 汇率 1，故额度换算直接等价 |
+| `display_in_currency` | true | 前台按货币显示 |
+
+1.0.1 已改为**运行时读取** `quota_per_unit`，不再写死 500000；读取失败回退默认值。费用显示 6 位小数。
+
+### 8.3 日志字段的语义修正（本地实现，已用上游真实数字反推）
+
+- **吞吐 tps** = `输出 token / (总时长 − 首字耗时)`。用上游截图 4 条真实数据反推验证：18/2.0/2.2s→9（上游 9）、30/3.0/2.3s→43（上游 43）、34/4.0/3.3s→49（上游 51）；79/5.0/4.5s→158 vs 上游 144，差异源于站点 `use_time` 只保留一位小数（真实 5.0486 被显示成 5.0），**公式本身正确**。
+- **首字耗时单位**：`other.frt` 多数部署为毫秒、个别为秒；按数值判断（> 30 视为毫秒）。
+- **排序**：站点返回顺序不可依赖，改为按 `created_at` 降序，最新在最上。
+- **时间格式**：`toLocaleString('zh-CN')` 输出 `2026-11-6 6:04:04`（月日不补零），与站点 `2026-11-06 06:04:04` 不一致；已改为手动补零。
+- **模型字段**：站点可能把 `response_model` 等给成对象，直接渲染会显示 `[object Object]`；已加 `pickModel()` 解包（字符串直接用、对象取 `name`/`id`）。
+
+### 8.4 宿主契约：`neartoken:prefs` 与 `usage.rows`
+
+插件侧 1.0.1 已完成：
+
+- `package.json` 的 `magpie.calls` 加入 `"neartoken:prefs"`（现 9 条）。
+- 读写协议：`{op:'get'}` / `{op:'set', disabled:[{model,groups}], hiddenGroups:[], pinned:[]}`；读回同时兼容 `{disabled:[...]}` 与旧版 `{disabledByGroup:{...}}`。
+- `magpie.min = "2.2.2"`：声明宿主能力门槛（`prefs` 通道与 `usage.rows` 从该版本起提供）。
+- 空态：有逐条数据源但窗口为空时显示「这个窗口没有逐条记录。」，不回落聚合视图。
+
+宿主侧仍需完成（**A 方案**）：
+
+1. `neartoken:prefs` 落盘到插件目录 `page/prefs.json`。
+2. 在 `pluginCatalog` 收口处按 `Prefs.Disabled` 过滤模型清单；provider 零改动，避免 `import neartoken` 成环。
+
+详细交接见 `HANDOFF-插件契约补齐.md`。
+
+### 8.5 仍未解决
+
+- 真机逐条日志能否拉到，取决于站点对插件钥匙的授权。探测只能证明端点认 key，不能证明该 key 有日志读取权限。
+- `bytes`（请求体大小）与上游请求 ID 在 new-api 日志对象里通常不存在，可能恒为空。
