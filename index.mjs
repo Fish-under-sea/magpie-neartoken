@@ -559,20 +559,52 @@ function writeLogs(rows) {
   } catch { /* 只读安装就跳过 */ }
 }
 
+/**
+ * pickModel 取模型名。
+ * 站点不同版本会把它给成字符串或对象（{ name, id }），
+ * 对象直接插进页面会显示 [object Object]，这里统一解包。
+ */
+function pickModel(...candidates) {
+  for (const v of candidates) {
+    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (v && typeof v === 'object') {
+      const inner = v.name ?? v.id ?? v.model ?? v.model_name
+      if (typeof inner === 'string' && inner.trim()) return inner.trim()
+    }
+  }
+  return ''
+}
+
 /** num 把站点可能给的字符串数字转成数字。 */
 function num(v) {
   const n = Number(v)
   return Number.isFinite(n) ? n : undefined
 }
 
-/** 从一条站点日志里取「首字耗时」：new-api 放在 other.frt，单位毫秒。 */
+/**
+ * firstToken 取「首字耗时」秒数。
+ * new-api 把它放在 other.frt：多数版本是毫秒，个别是秒。
+ * 判断依据：首字通常 < 30 秒，所以数值 > 30 一定是毫秒。
+ */
 function firstToken(rec) {
   let other = rec?.other
   if (typeof other === 'string') {
     try { other = JSON.parse(other) } catch { other = null }
   }
-  const frt = num(other?.frt) ?? num(other?.first_response_time)
-  return frt === undefined ? undefined : Math.round(frt) / 1000
+  const raw = num(other?.frt) ?? num(other?.first_response_time) ?? num(other?.first_token_time)
+  if (raw === undefined) return undefined
+  return raw > 30 ? raw / 1000 : raw
+}
+
+/**
+ * fmtStamp 把秒级时间戳格式化成 `2026-11-06 06:04:04`。
+ * 不能用 toLocaleString：它给的是 `2026-11-6 6:04:04`，月日不补零，
+ * 与站点显示不一致。
+ */
+function fmtStamp(sec) {
+  const d = new Date(sec * 1000)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
 /**
@@ -615,22 +647,30 @@ async function fetchLogs() {
         return o || null
       })()
       const t = num(r?.created_at) || num(r?.createdAt) || 0
-      const when = t ? new Date(t * 1000) : null
-      const fmt = (d) => d ? d.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-') : ''
-      const prompt = num(r?.prompt_tokens) ?? num(r?.promptTokens)
-      const completion = num(r?.completion_tokens) ?? num(r?.completionTokens)
-      const secs = num(r?.use_time) ?? num(r?.useTime)
-      const quota = num(r?.quota)
+      // 各字段按 new-api 常见写法逐个兜底，避免整列为空
+      const prompt = num(r?.prompt_tokens) ?? num(r?.promptTokens) ?? num(other?.prompt_tokens)
+      const completion = num(r?.completion_tokens) ?? num(r?.completionTokens) ?? num(other?.completion_tokens)
+      const secs = num(r?.use_time) ?? num(r?.useTime) ?? num(other?.use_time)
+      const quota = num(r?.quota) ?? num(other?.quota)
       return {
-        time: when ? fmt(when).slice(0, 16) : '',
+        at: t,
+        time: t ? fmtStamp(t) : '',
         kind: '消耗',
         tokenName: r?.token_name || r?.tokenName || '',
         group: r?.group || other?.group || '',
-        model: r?.model_name || r?.modelName || '',
-        upModel: other?.upstream_model || other?.up_model || '',
-        respModel: other?.response_model || '',
+        model: pickModel(r?.model_name, r?.modelName, other?.model_name),
+        upModel: pickModel(other?.upstream_model, other?.up_model, other?.request_model),
+        respModel: pickModel(other?.response_model, other?.downstream_model),
         effort: other?.reasoning_effort || '',
-        tps: completion && secs ? Math.round(completion / secs) : undefined,
+        // 吞吐 = 输出 token / 生成耗时（总时长减去首字等待）。
+        // 用总时长做分母会明显偏低（上游 144 t/s 会算成 16）。
+        tps: completion && secs
+          ? (() => {
+            const ttft = firstToken(r)
+            const gen = ttft !== undefined && secs > ttft ? secs - ttft : secs
+            return gen > 0 ? Math.round(completion / gen) : undefined
+          })()
+          : undefined,
         input: prompt,
         output: completion,
         cache: num(r?.cache_tokens) ?? num(other?.cache_tokens),
@@ -644,7 +684,9 @@ async function fetchLogs() {
           .filter(Boolean).join(' · '),
         isStream: r?.is_stream ?? r?.isStream,
       }
-    }).reverse()
+    })
+    // 最新在最上面：按时间显式降序，不依赖站点返回顺序
+    rows.sort((x, y) => (y.at || 0) - (x.at || 0))
     writeLogs(rows)
   } catch { /* 拿不到就保持上次的流水 */ }
 }

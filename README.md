@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**0.6.19**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
+当前版本：**0.7.0**。这是 NearToken 独立 npm 包的版本；后续 magpie 定制宿主升级目标 **2.2.1** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.6.19.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-0.7.0.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,17 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 0.7.0 日志数据修正（吞吐 · 排序 · 时间 · 字段解包）
+
+这一版集中修正日志数据的正确性，字段都按站点真实响应校准：
+
+- **吞吐 tps 公式修正**：改为 `输出 token / (总时长 − 首字耗时)`。之前用总时长做分母，导致 144 t/s 被算成 16 t/s。已用上游 4 条真实数据反推验证，3 条精确命中，第 4 条差异来自站点 `use_time` 只保留一位小数。
+- **排序修正**：去掉原来的 `.reverse()`（它假设接口返回旧→新），改为按时间戳显式降序，**最新一条在最上面**。
+- **时间格式补零**：`toLocaleString('zh-CN')` 给的是 `2026-11-6 6:04:04`，改为手动补零，输出 `2026-11-06 06:04:04`。
+- **首字耗时单位自适应**：`other.frt` 多数部署是毫秒、个别是秒；改为按数值判断（> 30 视为毫秒），避免 7 ms 被当成 7 秒。
+- **模型字段解包**：站点有时把 `response_model` 等给成对象，直接渲染会显示 `[object Object]`；新增 `pickModel`，字符串直接用、对象取 `name`/`id`。
+- **字段兜底**：`prompt/completion/use_time/quota` 增加 `other.*` 二级兜底，避免某部署写法不同导致整列为空。
 
 ## 0.6.19 插件显示名 · 真实逐条日志 · 费用精确
 
