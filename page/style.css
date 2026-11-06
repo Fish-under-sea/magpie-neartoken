@@ -450,7 +450,7 @@ select {
 }
 
 .ghost.link { text-decoration: none; display: inline-flex; align-items: center; }
-/* 头部按钮组：版本、检查更新、状态、断开四件一样高，右对齐 */
+/* 头部按钮组：版本、状态、断开三件一样高，右对齐 */
 .head { align-items: center; gap: 12px; }
 
 .actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
@@ -458,13 +458,6 @@ select {
 .actions .ghost { height: 28px; display: inline-flex; align-items: center; }
 .actions .ghost[disabled] { opacity: 0.6; }
 
-.update-note {
-  margin: 8px 0 0;
-  font-size: 11.5px;
-  color: var(--nt-muted);
-}
-.update-note.new { color: var(--nt-accent); }
-.update-note.warn { color: var(--nt-warn, #e0a44a); }
 /* 断开连接：与「已连接」同款胶囊，底色标红 */
 button.chip.danger {
   height: 26px; padding: 0 12px; border-radius: 999px; cursor: pointer;

@@ -583,30 +583,8 @@ function writeAff(d) {
   } catch { /* 只读安装：页面退回宿主 state */ }
 }
 
-/** stampLatest 把 npm 上的最新版本写进 page/latest.js，一分钟内不重复问。 */
-let latestAskedAt = 0
 /** logsAskedAt 是逐条日志最近一次补抓的时间，models() 里用来节流。 */
 let logsAskedAt = 0
-async function stampLatest() {
-  if (Date.now() - latestAskedAt < 60_000) return
-  latestAskedAt = Date.now()
-  try {
-    const res = await fetch('https://registry.npmjs.org/@fish-under-sea%2Fmagpie-neartoken/latest', {
-      headers: { accept: 'application/json' },
-    })
-    if (!res.ok) return
-    const body = await res.json()
-    const v = typeof body?.version === 'string' ? body.version.trim() : ''
-    if (!v) return
-    writeFileSync(
-      join(here, 'page', 'latest.js'),
-      'self.NEARTOKEN_LATEST = ' + JSON.stringify(v) + '\nself.NEARTOKEN_LATEST_AT = ' + Date.now() + '\n',
-      'utf8',
-    )
-  } catch {
-    /* 问不到就保持原样：页面会说「没查到」 */
-  }
-}
 
 /** 缓存 getAuth：定时同步邀请数时要用到站点钥匙。 */
 let authGetter = null
@@ -1060,7 +1038,6 @@ export default async function neartoken(input, options) {
         rememberAuth(getAuth)
         // 刚拿到凭据就补一次逐条日志：日志页不必等背景定时器那 5 分钟
         fetchLogs('usage').catch(() => {})
-        await stampLatest()
         const auth = await getAuth()
         const key = auth?.access || auth?.key
         if (!key) throw new Error('还没有连接 NearToken')
@@ -1131,8 +1108,6 @@ export default async function neartoken(input, options) {
           const k = (a && (a.access || a.key)) || ''
           if (typeof k === 'string' && k.trim()) sessionKey = k.trim()
         } catch { /* auth 形状不对就继续用已有的 */ }
-        // 版本探测放到后台：它要访问 npm registry，绝不能挡住宿主列举模型
-        try { void stampLatest() } catch { /* 版本探测失败不影响模型表 */ }
         // 宿主要模型表是高频动作：凭据拿到之后顺手补一次逐条日志（60 秒节流）。
         // 有些使用路径从不触发余额卡片，没有这一条日志就永远不刷新。
         try {

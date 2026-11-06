@@ -147,7 +147,6 @@
       await load()
       // 宿主的「整模型停用」要等目录加载完才能展开成分组停用
       if (hostOff.size) { applyHostOff(); render() }
-      startHotReload()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
         if (!visible) return
@@ -2510,70 +2509,6 @@
   $('disconnect').addEventListener('click', () => {
     act('断开连接', () => call('neartoken:disconnect'))
   })
-
-  // ---------- 检查更新 ----------
-
-  /** cmp 比两段版本号：a 比 b 新返回正数。只认数字段，够用了。 */
-  function cmpVersion(a, b) {
-    const pa = String(a).split(/[.-]/).map((x) => parseInt(x, 10) || 0)
-    const pb = String(b).split(/[.-]/).map((x) => parseInt(x, 10) || 0)
-    for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
-      const d = (pa[i] || 0) - (pb[i] || 0)
-      if (d) return d
-    }
-    return 0
-  }
-
-  /**
-   * loadLatest 取 npm 上的最新版本。
-   *
-   * 页面自己查不了，插件会把结果写成 page/latest.js；这里用 script 引入，
-   * 加 ?t= 破缓存，所以点一次「检查更新」就是现问一次。
-   */
-  function loadLatest() {
-    return new Promise((resolve) => {
-      const s = document.createElement('script')
-      s.src = 'latest.js?t=' + Date.now()
-      s.onload = () => resolve(typeof self.NEARTOKEN_LATEST === 'string' ? self.NEARTOKEN_LATEST : '')
-      s.onerror = () => resolve('')
-      document.head.append(s)
-    })
-  }
-
-  /**
-   * 自动热重载：定时读 page/latest.js 比对版本，发现比当前新就把本页带破缓存参数重载。
-   * 这样插件不需要「检查更新」按钮，装上新版本后页面会自己换过去。
-   */
-  let hotTimer = null
-  async function autoHotReload() {
-    const latest = await loadLatest()
-    const mine = self.NEARTOKEN_VERSION || ''
-    if (!latest || !mine || cmpVersion(latest, mine) <= 0) return
-    const key = 'nt-reloaded-' + latest
-    try {
-      if (sessionStorage.getItem(key)) return
-      sessionStorage.setItem(key, '1')
-    } catch { /* 没有 storage 也允许重载一次 */ }
-    const note = document.getElementById('update-note')
-    if (note) {
-      note.hidden = false
-      note.className = 'update-note new'
-      note.textContent = '插件已更新到 v' + latest + '，正在重载…'
-    }
-    setTimeout(() => {
-      try {
-        const u = new URL(location.href)
-        u.searchParams.set('v', latest)
-        location.replace(u.toString())
-      } catch { location.reload() }
-    }, 900)
-  }
-  function startHotReload() {
-    if (hotTimer) return
-    setTimeout(() => { autoHotReload().catch(() => {}) }, 2500)
-    hotTimer = setInterval(() => { autoHotReload().catch(() => {}) }, 60_000)
-  }
-
 
   // ---------- 画图 ----------
 
