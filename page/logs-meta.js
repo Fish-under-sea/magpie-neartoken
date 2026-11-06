@@ -1,2 +1,2 @@
-// 占位：插件运行时会把最近一次逐条日志抓取的结果覆盖写入这里。
-self.NEARTOKEN_LOGS_META = self.NEARTOKEN_LOGS_META || { at: 0, ok: false, stage: 'init', rows: 0 }
+// 由插件运行时写入：最近一次逐条日志抓取的结果
+self.NEARTOKEN_LOGS_META = {"at":1793999080001,"ok":false,"stage":"no-auth","trigger":"catalog","rows":0,"error":"还没拿到站点凭据（宿主尚未调用余额或请求钩子）"}
