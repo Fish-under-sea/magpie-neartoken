@@ -1254,3 +1254,6 @@
 
 /* 非流式：蓝色改灰，和上游一致 */
 .logs .lg-flow.off { color: var(--nt-muted); }
+
+/* 代金券里的组名可能很长，给它省略号而不是撑破胶囊 */
+.card .voucher .who .gb-rest { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

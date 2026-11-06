@@ -406,12 +406,24 @@
         el('span', { class: 'vt-v', text: unit + totalNum.toFixed(2) })))
       parts.push(el('div', { class: 'vouchers' }, vouchers.map((v) =>
         el('div', { class: 'voucher' },
-          el('span', { class: 'who' }, groupBadge(String(v.group || '')), el('span', { class: 'vname', text: groupNameOnly(String(v.group || '')) })),
+          el('span', { class: 'who' }, groupBadge(String(v.group || ''))),
           el('span', { class: 'amt', text: v.amount })))))
     } else {
       parts.push(el('p', { class: 'note', text: '没有可用代金券。站点的邀请计划会发分组券。' }))
     }
     if (view.refreshedAt) parts.push(el('p', { class: 'note', text: '余额截至 ' + clockText(view.refreshedAt) }))
+    // 诊断：宿主有没有来要模型表、要到的表多大。掉供应商时靠这行定位。
+    const health = self.NEARTOKEN_HEALTH
+    if (health && Array.isArray(health.recent) && health.recent.length) {
+      const last = health.recent[health.recent.length - 1]
+      const bad = health.recent.filter((x) => !x.ok || !x.count).length
+      parts.push(el('p', {
+        class: 'note',
+        title: health.recent.map((x) => clockText(x.at) + ' → ' + (x.ok ? x.count + ' 个模型 / ' + x.ms + 'ms' : '失败: ' + x.error)).join('\n'),
+        text: '模型表诊断：最近 ' + health.recent.length + ' 次调用中 ' + bad + ' 次为空或失败；最近一次 '
+          + (last.ok ? '返回 ' + last.count + ' 个模型（' + last.ms + 'ms）' : '失败：' + (last.error || '未知')),
+      }))
+    }
     return card('账户', ...parts)
   }
 
@@ -2221,9 +2233,9 @@
   let sendAgain = false
   /** 分组收起 / 置顶：宿主契约里的 hiddenGroups 与 pinned。 */
   function hiddenGroupsOf() {
-    const out = []
-    for (const [key, open] of asideOpen) if (key === 'group' || open === false) out.push(key)
-    return out.filter((k) => k === 'group' && asideOpen.get('group') === false)
+    // 这是「被隐藏的分组名」列表，不是侧栏区块名。
+    // 页面目前没有隐藏分组的功能，给空数组，避免宿主把 'group' 当成分组名过滤。
+    return []
   }
   function pinnedOf() {
     return marketGroup ? [marketGroup] : []

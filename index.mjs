@@ -82,26 +82,59 @@ function grantOf(data) {
   return { type: 'success', access: token, refresh: token, tokenName: data?.token_name || TOKEN_NAME, user: data?.user }
 }
 
+/** 最近一次成功的币种参数；请求失败时沿用它，绝不回退到 per:1。 */
+let lastCurrency = null
+
 /** 站点当前怎么印钱：一个 quota 值折算成它显示的那笔钱。 */
 async function currency() {
   try {
     const s = await call('/api/status')
     const d = s?.data ?? {}
-    const per = Number(d.quota_per_unit) > 0 ? Number(d.quota_per_unit) : 1
-    const rate = Number(d.usd_exchange_rate) > 0 ? Number(d.usd_exchange_rate) : 1
+    const per = Number(d.quota_per_unit) > 0 ? Number(d.quota_per_unit) : 500000
+    const rate = Number(d.usd_exchange_rate ?? d.custom_currency_exchange_rate) > 0
+      ? Number(d.usd_exchange_rate ?? d.custom_currency_exchange_rate)
+      : 1
     const display = d.display_in_currency === true
-    const symbol = typeof d.custom_currency_symbol === 'string' && d.custom_currency_symbol.trim()
-      ? d.custom_currency_symbol.trim()
-      : display ? '￥' : '$'
-    return { symbol, per, rate, display }
+    // 符号优先级：quota_display_type（实测 CNY）→ 非占位符的 custom_currency_symbol → 默认。
+    // 站点给的 custom_currency_symbol 常是通用占位符，直接显示很难看。
+    const byCode = { CNY: '\u00a5', USD: '\u0024', EUR: '\u20ac', GBP: '\u00a3', JPY: '\u00a5' }
+    const code = typeof d.quota_display_type === 'string' ? d.quota_display_type.trim().toUpperCase() : ''
+    const custom = typeof d.custom_currency_symbol === 'string' ? d.custom_currency_symbol.trim() : ''
+    const symbol = byCode[code]
+      ? byCode[code]
+      : custom && custom !== '\u00a4'
+        ? custom
+        : display ? '\u00a5' : '\u0024'
+    lastCurrency = { symbol, per, rate, display }
+    return lastCurrency
   } catch {
-    return { symbol: '$', per: 1, rate: 1, display: false }
+    // 读不到就沿用上一次成功的值；从没成功过才用站点约定默认（1 美元 = 500000 额度）。
+    // 绝不回退 per:1 —— 那会把 quota 原值当金额显示，余额直接放大 50 万倍。
+    return lastCurrency || { symbol: '\u00a5', per: 500000, rate: 1, display: true }
   }
 }
 
+/**
+ * writeHealth 把最近几次 models() 的调用结果写成 page/health.js。
+ *
+ * 掉供应商时最需要区分两件事：宿主到底有没有来要模型表、要到的表是不是空的。
+ * 页面读这个脚本就能看到，不用去翻宿主的插件进程日志。
+ */
+const healthLog = []
+function writeHealth(rec) {
+  try {
+    healthLog.push({ at: Date.now(), ...rec })
+    while (healthLog.length > 12) healthLog.shift()
+    writeFileSync(
+      join(here, 'page', 'health.js'),
+      '// 由插件运行时写入：最近几次 provider.models() 的调用结果\nself.NEARTOKEN_HEALTH = ' + JSON.stringify({ at: Date.now(), recent: healthLog }) + '\n',
+      'utf8',
+    )
+  } catch { /* 只读安装就跳过诊断 */ }
+}
+
 /** money 把 quota 折成站点显示的那笔钱。 */
-function money(quota, cur) {
-  const base = quota / (cur.per > 0 ? cur.per : 1)
+function money(quota, cur) {  const base = quota / (cur.per > 0 ? cur.per : 1)
   return (cur.display && cur.rate > 0 ? base * cur.rate : base).toFixed(2)
 }
 
@@ -793,13 +826,19 @@ export default async function neartoken(input, options) {
      * 宿主列表里显示 @NearToken，点进详情显示 npm 包名 @fish-under-sea/magpie-neartoken。
      */
     async config(cfg) {
-      cfg.provider ??= {}
-      cfg.provider[PROVIDER_ID] ??= {}
-      const p = cfg.provider[PROVIDER_ID]
-      p.name = 'NearToken'
-      p.npm ??= '@ai-sdk/openai-compatible'
-      p.api ??= SITE + '/v1'
-      p.models ??= {}
+      // 任何一步失败都不能让 provider 消失：宿主拿不到声明就当成没这个供应商。
+      try {
+        if (!cfg || typeof cfg !== 'object') return
+        cfg.provider ??= {}
+        cfg.provider[PROVIDER_ID] ??= {}
+        const p = cfg.provider[PROVIDER_ID]
+        p.name = 'NearToken'
+        // 不要声明 models：空对象会被理解成「这个供应商声明的模型是 0 个」。
+        // 模型表统一由 provider.models() 提供，避免两套来源打架。
+        if (!p.npm) p.npm = '@ai-sdk/openai-compatible'
+        if (!p.api) p.api = SITE + '/v1'
+        delete p.models
+      } catch { /* 声明失败也不能抛 */ }
     },
     auth: {
       provider: PROVIDER_ID,
@@ -928,12 +967,16 @@ export default async function neartoken(input, options) {
       async models() {
         // 版本探测放到后台：它要访问 npm registry，绝不能挡住宿主列举模型
         try { void stampLatest() } catch { /* 版本探测失败不影响模型表 */ }
+        const startedAt = Date.now()
         // 最后一层保险：catalog 已自带兜底，这里再挡一次，
         // 保证永远不向宿主抛 rejected Promise（抛了宿主就判「没有模型」→ 掉供应商）
         try {
           const out = await catalog(disabledGroups, disabledModels, enabledByGroup, disabledByGroup)
-          return out && typeof out === 'object' ? out : {}
-        } catch {
+          const safe = out && typeof out === 'object' ? out : {}
+          writeHealth({ ok: true, count: Object.keys(safe).length, ms: Date.now() - startedAt })
+          return safe
+        } catch (error) {
+          writeHealth({ ok: false, count: 0, ms: Date.now() - startedAt, error: String(error && error.message ? error.message : error) })
           return {}
         }
       },
