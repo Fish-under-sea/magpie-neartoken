@@ -316,34 +316,13 @@ function npmOf(row) {
   return '@ai-sdk/openai-compatible'
 }
 
-/** 读页面写下的偏好文件（page/prefs.json）；不存在或坏掉就当作没有偏好。 */
-function readPrefs() {
-  try {
-    const raw = readFileSync(join(here, 'page', 'prefs.json'), 'utf8')
-    const j = JSON.parse(raw)
-    return j && typeof j === 'object' ? j : {}
-  } catch { return {} }
-}
-
 /** 模型 → 分组 ref。请求不在 catalog 里，靠这张表补 x-neartoken-group。 */
 const groupRefOf = new Map()
 
-async function catalogUnsafe(disabledGroups = new Set(), disabledModels = new Set(), enabledByGroup = new Map(), disabledByGroup = new Map(), ignorePrefs = false) {
+async function catalogUnsafe() {
   const groupsOut = new Map()
   const { env, status, bundled } = await loadPricingEnv()
   const rows = Array.isArray(env?.data) ? env.data : []
-  // 页面偏好：模型 → 被停用的分组。放在请求外读一次，不阻塞也不触怒宿主。
-  const prefs = ignorePrefs ? {} : readPrefs()
-  const prefsDisabled = (() => {
-    const out = new Map()
-    const raw = prefs?.disabledByGroup
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      for (const [name, list] of Object.entries(raw)) {
-        if (Array.isArray(list) && list.length) out.set(String(name), new Set(list.map(String)))
-      }
-    }
-    return out
-  })()
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
   const ratios = env?.group_ratio && typeof env.group_ratio === 'object' ? env.group_ratio : {}
   const vendors = Array.isArray(env?.vendors) ? env.vendors : []
@@ -371,10 +350,9 @@ async function catalogUnsafe(disabledGroups = new Set(), disabledModels = new Se
     }
     const groups = all.filter((g) => {
       const name = String(g ?? '').trim()
-      if (!name || disabledGroups.has(name)) return false
-      // 页面偏好（文件）里被停用的分组才排除；文件不存在时不过滤
-      if (prefsDisabled.has(model) && prefsDisabled.get(model).has(name)) return false
-      return true
+      // 停用与否由宿主的 modelFilter（neartoken-prefs.json）负责，插件不再二次过滤：
+      // 两份真相最容易互相打架——一边剔光、一边还留着，表现就是「模型数忽多忽少」。
+      return Boolean(name)
     })
     if (!groups.length) continue
     // 一个模型只出一行：多分组不再展开成多行，否则「只启用一个模型」在
@@ -441,13 +419,10 @@ async function catalogUnsafe(disabledGroups = new Set(), disabledModels = new Se
  *   2. 异常时用包内快照重建一次（不带页面偏好过滤）；
  *   3. 仍为空则直接用包内快照的原始模型名，最差也要把模型表撑起来。
  */
-async function catalog(disabledGroups, disabledModels, enabledByGroup, disabledByGroup) {
+async function catalog() {
   try {
-    const out = await catalogUnsafe(disabledGroups, disabledModels, enabledByGroup, disabledByGroup)
+    const out = await catalogUnsafe()
     if (out && Object.keys(out).length) return out
-    // 空表：完全忽略页面偏好再试一次（停光所有分组时也必须给宿主非空表）
-    const relaxed = await catalogUnsafe(disabledGroups, disabledModels, enabledByGroup, new Map(), true)
-    if (relaxed && Object.keys(relaxed).length) return relaxed
   } catch { /* 落到下面的快照兜底 */ }
   try {
     const snap = readBundledPricing()
@@ -567,6 +542,8 @@ function writeAff(d) {
 
 /** stampLatest 把 npm 上的最新版本写进 page/latest.js，一分钟内不重复问。 */
 let latestAskedAt = 0
+/** logsAskedAt 是逐条日志最近一次补抓的时间，models() 里用来节流。 */
+let logsAskedAt = 0
 async function stampLatest() {
   if (Date.now() - latestAskedAt < 60_000) return
   latestAskedAt = Date.now()
@@ -624,6 +601,22 @@ function writeLogs(rows) {
     writeFileSync(
       join(here, 'page', 'logs.js'),
       '// 由插件运行时从站点日志接口写入\nself.NEARTOKEN_LOGS = ' + JSON.stringify({ at: Date.now(), rows }) + '\n',
+      'utf8',
+    )
+  } catch { /* 只读安装就跳过 */ }
+}
+
+/**
+ * writeLogsMeta 把「这次抓逐条日志走到哪一步」写成 page/logs-meta.js。
+ *
+ * 页面拿不到逐条流水时，最需要区分三件事：插件还没拿到凭据、接口失败、站点没记录。
+ * 这三种在页面上是三句不同的话，不合并成一句「没有数据」。
+ */
+function writeLogsMeta(rec) {
+  try {
+    writeFileSync(
+      join(here, 'page', 'logs-meta.js'),
+      '// 由插件运行时写入：最近一次逐条日志抓取的结果\nself.NEARTOKEN_LOGS_META = ' + JSON.stringify({ at: Date.now(), ...rec }) + '\n',
       'utf8',
     )
   } catch { /* 只读安装就跳过 */ }
@@ -693,23 +686,35 @@ async function readQuotaPerUnit() {
   } catch { /* 拿不到就用默认 500000 */ }
 }
 
-async function fetchLogs() {
-  if (!authGetter) return
+async function fetchLogs(trigger = 'tick') {
+  // 凭据只在宿主要余额或发请求时才会递进来；没拿到就把原因写出来，别静默失败。
+  if (!authGetter) {
+    writeLogsMeta({ ok: false, stage: 'no-auth', trigger, rows: 0, error: '还没拿到站点凭据' })
+    return
+  }
   try {
     const auth = await authGetter()
     const key = auth?.access || auth?.key || ''
-    if (!key) return
+    if (!key) {
+      writeLogsMeta({ ok: false, stage: 'no-key', trigger, rows: 0, error: '凭据里没有可用的令牌' })
+      return
+    }
     await readQuotaPerUnit()
     let list = null
+    let lastError = ''
     for (const path of ['/api/log/token?p=0&page_size=100', '/api/log/self?p=0&page_size=100']) {
       try {
         const env = await call(path, { key })
+        if (env?.success === false) lastError = String(env.message || '站点拒绝')
         const d = env?.data
         const items = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : Array.isArray(d?.data) ? d.data : null
         if (items && items.length) { list = items; break }
-      } catch { /* 换下一个端点 */ }
+      } catch (error) { lastError = String(error && error.message ? error.message : error) }
     }
-    if (!list) return
+    if (!list) {
+      writeLogsMeta({ ok: false, stage: 'no-list', trigger, rows: 0, error: lastError || '站点没有返回记录' })
+      return
+    }
     const rows = list.map((r) => {
       const other = (() => {
         let o = r?.other
@@ -758,7 +763,10 @@ async function fetchLogs() {
     // 最新在最上面：按时间显式降序，不依赖站点返回顺序
     rows.sort((x, y) => (y.at || 0) - (x.at || 0))
     writeLogs(rows)
-  } catch { /* 拿不到就保持上次的流水 */ }
+    writeLogsMeta({ ok: true, stage: 'ok', trigger, rows: rows.length })
+  } catch (error) {
+    writeLogsMeta({ ok: false, stage: 'error', trigger, rows: 0, error: String(error && error.message ? error.message : error) })
+  }
 }
 
 /**
@@ -766,57 +774,33 @@ async function fetchLogs() {
  * 拉全量（不带禁用参数）写 page/pricing.js，禁用状态由页面自己管。
  */
 let catalogTimer = null
+let logsTimer = null
 function scheduleCatalogSync() {
   if (catalogTimer) return
   const tick = () => {
-    catalog(new Set(), new Set()).catch(() => {})
+    catalog().catch(() => {})
     fetchAff().catch(() => {})
-    fetchLogs().catch(() => {})
+    fetchLogs('catalog').catch(() => {})
   }
   tick()
   catalogTimer = setInterval(tick, 5 * 60 * 1000)
   if (typeof catalogTimer.unref === 'function') catalogTimer.unref()
+  // 逐条日志变化比目录快得多：拿到凭据后每分钟补一次，别等 5 分钟那一轮。
+  logsTimer = setInterval(() => {
+    if (!authGetter) return
+    fetchLogs('interval').catch(() => {})
+  }, 60 * 1000)
+  if (typeof logsTimer.unref === 'function') logsTimer.unref()
 }
 
 export default async function neartoken(input, options) {
-  // 页面写进来的开关：关掉的分组，以及关掉的模型。
-  // 走 magpie 的 plugin options（页面 magpie.options.set），不碰宿主代码。
-  // 默认全选：options 里没有 disabledModels 时，一个都不关。
-  const asSet = (raw) => {
-    if (Array.isArray(raw)) return new Set(raw.filter((x) => typeof x === 'string'))
-    if (typeof raw === 'string' && raw.trim()) {
-      try {
-        const parsed = JSON.parse(raw)
-        return new Set(Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [])
-      } catch {
-        return new Set()
-      }
-    }
-    return new Set()
-  }
-  const disabledGroups = asSet(options?.disabledGroups)
-  const disabledModels = asSet(options?.disabledModels)
-  /**
-   * 分组级状态。disabledByGroup 是主用的例外表（模型 → 被停用的分组）；
-   * enabledByGroup 是 0.6.7 早期写法，仍兼容但只在形状合法时采用。
-   * 任何形状不合法都当作「没有记录」，退回默认（该模型所有分组都可用），
-   * 绝不让一条坏数据把模型整体判成停用——那会直接表现为供应商掉出。
-   */
-  function readGroupMap(raw) {
-    if (typeof raw === 'string' && raw.trim()) {
-      try { raw = JSON.parse(raw) } catch { return new Map() }
-    }
-    const map = new Map()
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return map
-    for (const [name, list] of Object.entries(raw)) {
-      if (!name || !Array.isArray(list)) continue
-      const groups = list.map((g) => String(g ?? '').trim()).filter(Boolean)
-      if (groups.length) map.set(String(name), new Set(groups))
-    }
-    return map
-  }
-  const disabledByGroup = readGroupMap(options?.disabledByGroup)
-  const enabledByGroup = readGroupMap(options?.enabledByGroup)
+  // 启停状态一律不经过插件 options：
+  //   · 页面写 options 会让宿主重建插件宿主，供应商因此在列表里闪断；
+  //   · 宿主的 ModelIDs（neartoken-prefs.json）已经负责把停用模型挡在清单外，
+  //     插件这一层再读一份旧 options 只会制造第二个真相。
+  // 参数保留是为了兼容宿主既有调用形状，内容不再参与过滤。
+  void input
+  void options
   // 后台每 5 分钟把 /api/pricing 再拉一遍写回 page/pricing.js，
   // 页面每分钟重载该文件——模型清单与分组就跟着站点实时同步。
   scheduleCatalogSync()
@@ -906,6 +890,8 @@ export default async function neartoken(input, options) {
       /** 余额：站点钱包端点，按 magpie 的用量卡显示。 */
       async usage(getAuth) {
         rememberAuth(getAuth)
+        // 刚拿到凭据就补一次逐条日志：日志页不必等背景定时器那 5 分钟
+        fetchLogs('usage').catch(() => {})
         await stampLatest()
         const auth = await getAuth()
         const key = auth?.access || auth?.key
@@ -925,6 +911,7 @@ export default async function neartoken(input, options) {
       /** 请求带着这把钥匙出去；分组头由每个模型自己带（见 catalog）。 */
       async loader(getAuth) {
         rememberAuth(getAuth)
+        fetchLogs('loader').catch(() => {})
         const auth = await getAuth()
         const key = auth?.access || auth?.key || ''
         return {
@@ -967,11 +954,19 @@ export default async function neartoken(input, options) {
       async models() {
         // 版本探测放到后台：它要访问 npm registry，绝不能挡住宿主列举模型
         try { void stampLatest() } catch { /* 版本探测失败不影响模型表 */ }
+        // 宿主要模型表是高频动作：凭据拿到之后顺手补一次逐条日志（60 秒节流）。
+        // 有些使用路径从不触发余额卡片，没有这一条日志就永远不刷新。
+        try {
+          if (authGetter && Date.now() - logsAskedAt > 60_000) {
+            logsAskedAt = Date.now()
+            fetchLogs('models').catch(() => {})
+          }
+        } catch { /* 日志失败不影响模型表 */ }
         const startedAt = Date.now()
         // 最后一层保险：catalog 已自带兜底，这里再挡一次，
         // 保证永远不向宿主抛 rejected Promise（抛了宿主就判「没有模型」→ 掉供应商）
         try {
-          const out = await catalog(disabledGroups, disabledModels, enabledByGroup, disabledByGroup)
+          const out = await catalog()
           const safe = out && typeof out === 'object' ? out : {}
           writeHealth({ ok: true, count: Object.keys(safe).length, ms: Date.now() - startedAt })
           return safe

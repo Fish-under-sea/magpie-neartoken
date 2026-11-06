@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 
 const source = fs.readFileSync(new URL('../page/app.js', import.meta.url), 'utf8')
-const names = new Set(['groupEnableStats', 'groupNote', 'groupChipModel', 'bandActiveCount', 'groupTags', 'cheapestGroup', 'isOn', 'viewGroup', 'initDisabledByGroup', 'groupOptionsPayload'])
+const names = new Set(['groupEnableStats', 'groupNote', 'groupChipModel', 'bandActiveCount', 'groupTags', 'cheapestGroup', 'isOn', 'viewGroup', 'initDisabledByGroup', 'groupOptionsPayload', 'setAll', 'hostPayload'])
 const fns = [...source.matchAll(/  (?:async )?function (\w+)\([^\n]*\) \{[\s\S]*?\n  \}/g)]
   .filter((m) => names.has(m[1])).map((m) => m[0]).join('\n')
 const consts = [
@@ -24,13 +24,20 @@ const p = {
   notes: { G1: '一号分组说明', G2: '', G3: '' },
 }
 
-function make(entries = [], group = '', options = {}) {
+function make(entries = [], group = '', prefsView = undefined) {
   const ctx = vm.createContext({
     Map, Set, JSON, String, Number, Object, Array,
     KIND_SERIES: { chat: '对话' }, groupKind: () => 'chat',
-    marketGroup: group, pricing: () => p, options,
-    bridge: { call: async () => { throw new Error('no prefs') } },
+    marketGroup: group, pricing: () => p,
+    bridge: {
+      call: async () => {
+        if (prefsView === undefined) throw new Error('no prefs')
+        return prefsView
+      },
+    },
     localStorage: { getItem: () => null, setItem: () => {} },
+    render: () => {},
+    saveDisabled: async () => {},
   })
   vm.runInContext(consts + '\n' + fns + '\n;globalThis.__dbg = disabledByGroup; globalThis.__hostOff = hostOff;', ctx)
   ctx.__dbg.clear()
@@ -88,15 +95,54 @@ test('宿主记的「整模型停用」让该模型在所有分组都显示为�
   assert.equal(ctx.isOn(p.models[0]), true)
 })
 
-test('读回停用表：形状不对就当没有记录，不会把模型判成停用', async () => {
-  for (const bad of [{ disabledByGroup: { a: 'G1' } }, { disabledByGroup: [] }, { disabledByGroup: 'bad' }, { disabledByGroup: null }]) {
+test('全选会把分组明细与宿主整模型停用一起清空', async () => {
+  const ctx = make([['a', ['G1']], ['b', ['G1', 'G2']]])
+  ctx.__hostOff.add('c')
+  await ctx.setAll(true)
+  assert.equal(ctx.__dbg.size, 0, '全选后不该残留任何停用记录')
+  assert.equal(ctx.__hostOff.size, 0, '宿主的整模型停用也要清掉，否则分组侧栏点不亮')
+})
+
+test('全不选把每个模型的所有分组都关掉，卡片与分组一起变灰', async () => {
+  const ctx = make()
+  await ctx.setAll(false)
+  for (const m of p.models) {
+    const off = ctx.__dbg.get(m.name)
+    assert.ok(off, m.name + ' 应该被停用')
+    for (const g of m.enable_groups) assert.ok(off.has(g), `${m.name} 的 ${g} 应该被关掉`)
+  }
+  assert.equal(ctx.groupEnableStats(p).get('G1').enabled, 0, '侧栏分组不能还亮着')
+})
+
+test('全部关掉时不把整张表交给宿主（空表会让供应商消失）', () => {
+  const { hostPayload } = make()
+  const plain = { a: ['G1'], b: ['G1', 'G2'], c: ['G3'] }
+  assert.deepEqual(JSON.parse(JSON.stringify(hostPayload(plain, p.models))), { disabled: [], allOff: true })
+  // 只关掉一个模型的全部分组：照常交给宿主隐藏这一个
+  const one = hostPayload({ b: ['G1', 'G2'] }, p.models)
+  assert.equal(one.allOff, false)
+  assert.deepEqual(JSON.parse(JSON.stringify(one.disabled)).map((x) => x.model), ['b'])
+  // 只关部分分组：不交给宿主
+  const partial = hostPayload({ b: ['G1'] }, p.models)
+  assert.deepEqual(JSON.parse(JSON.stringify(partial.disabled)), [])
+})
+
+test('读回宿主偏好：形状不对就当没有记录，不会把模型判成停用', async () => {
+  for (const bad of [
+    { disabled: 'bad' },
+    { disabled: null },
+    { disabled: [{}] },
+    { disabled: [{ model: '' }] },
+    {},
+  ]) {
     const ctx = make([], '', bad)
     await ctx.initDisabledByGroup()
-    assert.equal(ctx.__dbg.size, 0, JSON.stringify(bad))
+    assert.equal(ctx.__hostOff.size, 0, JSON.stringify(bad))
     assert.equal(ctx.isOn(p.models[0]), true)
   }
-  const ok = make([], '', { disabledByGroup: { a: ['G1'] } })
+  const ok = make([], '', { disabled: [{ model: 'a', groups: ['G1'] }] })
   await ok.initDisabledByGroup()
+  assert.equal(ok.__hostOff.has('a'), true, '宿主的停用要认')
   assert.equal(ok.isOn(p.models[0]), false)
 })
 

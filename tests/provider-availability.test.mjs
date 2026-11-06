@@ -5,16 +5,17 @@ import os from 'node:os'
 import path from 'node:path'
 
 // 掉供应商的回归防护：宿主拿不到模型表就会判定「这个供应商没有模型」。
-// 这组用例锁死三条：抛异常不冒泡、空表不返回、偏好过滤到空时自动放宽。
+// 这组用例锁死两条：抛异常不冒泡、不返回空表；并锁住「插件不再二次按 prefs 过滤」。
 
 const src = fs.readFileSync(new URL('../index.mjs', import.meta.url), 'utf8')
 
-test('catalog 有三层兜底：catalogUnsafe + 空表放宽 + 快照重建', () => {
+test('catalog 有两层兜底：catalogUnsafe + 包内快照重建', () => {
   assert.ok(/async function catalogUnsafe\(/.test(src), '应有 catalogUnsafe 实现')
   assert.ok(/async function catalog\(/.test(src), '应有安全包装的 catalog')
-  assert.ok(/catalogUnsafe\([\s\S]{0,200}?true\)/.test(src), '放宽分支应调用 catalogUnsafe(..., ignorePrefs=true)')
-  assert.ok(/ignorePrefs = false/.test(src), 'catalogUnsafe 应有 ignorePrefs 形参')
   assert.ok(/readBundledPricing\(\)/.test(src), '应有快照重建分支')
+  // 停用一律交给宿主的 modelFilter：插件再按 prefs 过滤就是第二份真相
+  assert.equal(/ignorePrefs/.test(src), false, '不应再有「忽略偏好放宽」这条分支')
+  assert.equal(/readPrefs\(/.test(src), false, '不应再读 page/prefs.json 参与过滤')
 })
 
 test('models() 外层吞掉异常，绝不向宿主抛 rejected Promise', () => {
@@ -25,24 +26,16 @@ test('models() 外层吞掉异常，绝不向宿主抛 rejected Promise', () => 
   assert.ok(seg.includes('return {}'), 'catch 应返回空对象而不是抛出')
 })
 
-test('catalogUnsafe 内部异常的后果：外层 catalog 仍返回非空表（行为验证）', async () => {
-  // 用临时目录模拟：快照存在，但 prefs 把某模型所有分组停用
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nt-guard-'))
-  fs.mkdirSync(path.join(dir, 'page'), { recursive: true })
-  const snap = {
-    data: [
-      { model_name: 'm1', enable_groups: ['G1'], supported_endpoint_types: ['openai'] },
-      { model_name: 'img1', enable_groups: ['G2'], supported_endpoint_types: ['image-generation'] },
-    ],
-    group_ratio: { G1: 1, G2: 1 },
-    group_refs: { G1: 'r1', G2: 'r2' },
-    vendors: [],
-  }
-  fs.writeFileSync(path.join(dir, 'page', 'pricing.js'), 'self.NEARTOKEN_PRICING = ' + JSON.stringify(snap) + '\n')
-  // 把 m1 的所有分组都停用
-  fs.writeFileSync(path.join(dir, 'page', 'prefs.json'), JSON.stringify({ disabledByGroup: { m1: ['G1'] } }))
+test('插件不再按旧 options 过滤模型（options 里留什么都不影响模型表）', () => {
+  // 旧版把启停写进 options，宿主重建插件宿主导致闪断；这条锁住不再回头
+  assert.equal(/options\?\.disabledGroups/.test(src), false, '不应再读 options.disabledGroups')
+  assert.equal(/options\?\.disabledModels/.test(src), false, '不应再读 options.disabledModels')
+  assert.equal(/options\?\.enabledByGroup/.test(src), false, '不应再读 options.enabledByGroup')
+  assert.equal(/options\?\.disabledByGroup/.test(src), false, '不应再读 options.disabledByGroup')
+})
 
-  // 直接验证语义：放宽后 m1 会回来
-  assert.ok(fs.existsSync(path.join(dir, 'page', 'prefs.json')))
-  fs.rmSync(dir, { recursive: true, force: true })
+test('promise 被拒时不向宿主冒泡（models 外层 catch 已覆盖）', () => {
+  // 行为验证放在 provider-group-scope 的夹具里；这里只锁源码约定
+  assert.ok(/catch \(error\)/.test(src), 'models 应有 catch')
+  assert.ok(/return safe/.test(src), '成功路径应返回对象')
 })

@@ -54,14 +54,16 @@ test('模型在原生列表里只显示模型名', async () => {
   assert.equal(m.img1.name, 'img1')
 })
 
-test('page/prefs.json 里的停用分组会让该模型从表里消失', async () => {
+test('停用状态不再由插件过滤：prefs.json 写什么都不影响模型表', async () => {
+  // 停用由宿主的 modelFilter（neartoken-prefs.json → HiddenModels）负责。
+  // 插件再按 prefs 过滤就是第二份真相，正是「模型数忽多忽少」的来源。
   fs.writeFileSync(path.join(dir, 'page', 'prefs.json'), JSON.stringify({ disabledByGroup: { m1: ['G-cheap', 'G-key'] } }))
   const m = await models({})
-  assert.equal(m.m1, undefined, '两个分组都停用时应消失')
-  assert.ok(m.img1, '其它模型不受影响')
+  assert.ok(m.m1, '插件必须仍返回 m1，交给宿主去隐藏')
+  assert.ok(m.img1, '其它模型同样不受影响')
   fs.rmSync(path.join(dir, 'page', 'prefs.json'), { force: true })
   const back = await models({})
-  assert.ok(back.m1, '删掉偏好后恢复')
+  assert.ok(back.m1, '删掉偏好后依然在')
 })
 
 test('API 方言跟着端点走：纯 anthropic 模型不会被当成 openai 发', async () => {

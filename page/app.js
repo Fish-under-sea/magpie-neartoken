@@ -30,9 +30,6 @@
   const windows = new Map()
   /** 充值面：档位、渠道、当前选择。 */
   let topupInfo = null
-  /** 插件自己的开关：关掉的模型（写进 magpie 的 plugin options，provider 插件按它过滤）。 */
-  let options = {}
-  let disabledModels = new Set()
   /** 当前视角：home / market / logs。 */
   let tab = 'home'
   /** 插件写下的分组快照（page/groups.js），页面加载脚本取到。 */
@@ -144,15 +141,8 @@
     }
     try {
       await bridge.ready
-      // 插件自己的开关：关掉的模型。默认全选（options 里没有这个字段时一个都不关）
-      try {
-        options = (await bridge.options.get()) || {}
-      } catch {
-        options = {}
-      }
-      const raw = options.disabledModels
-      disabledModels = Array.isArray(raw) ? new Set(raw)
-        : (typeof raw === 'string' && raw.trim() ? new Set((() => { try { return JSON.parse(raw) } catch { return [] } })()) : new Set())
+      // 不再读插件 options：启停状态只走 neartoken:prefs（写文件、不重建插件宿主）。
+      // 旧版 options 里那几个键即使还在宿主配置里，也不再参与任何判断。
       await initDisabledByGroup()
       await load()
       // 宿主的「整模型停用」要等目录加载完才能展开成分组停用
@@ -288,6 +278,8 @@
           if (tab === key) return
           tab = key
           render()
+          // 日志页：先把插件刚写出的流水换进来，再重绘一次
+          if (key === 'logs') syncLogs(() => render())
           if (key !== 'home' && view.configured && !windows.has(span)) {
             call('neartoken:usage', { range: span }).then((w) => { windows.set(span, w); render() }).catch(showError)
           }
@@ -644,6 +636,8 @@
     if (sec > 0) {
       logAutoTimer = setInterval(() => {
         if (tab !== 'logs') return
+        // 逐条流水由插件抓取写入，自动刷新要把它一起换进来，否则只有聚合数在动
+        syncLogs(() => render())
         refreshUsage(true).catch(() => {})
       }, sec * 1000)
     }
@@ -675,6 +669,34 @@
    * startPriceSync 每分钟把插件写出后的新快照重新引入一次，
    * 模型列表与分组跟着站点实时同步（禁用状态、筛选都保留）。
    */
+  /**
+   * syncLogs 把插件新写出的逐条流水与诊断重新引入一次。
+   *
+   * logs.js 只在页面加载时引一次，插件之后写入的新记录页面看不到——
+   * 所以日志页开着时要主动换一份，否则永远停在打开那一刻的旧数据。
+   */
+  function syncLogs(then) {
+    const prevLogs = document.querySelector('script[data-nt-logs]')
+    const s = document.createElement('script')
+    s.src = 'logs.js?t=' + Date.now()
+    s.dataset.ntLogs = '1'
+    s.onload = () => {
+      if (prevLogs && prevLogs !== s) prevLogs.remove()
+      const prevMeta = document.querySelector('script[data-nt-logs-meta]')
+      const m = document.createElement('script')
+      m.src = 'logs-meta.js?t=' + Date.now()
+      m.dataset.ntLogsMeta = '1'
+      m.onload = () => {
+        if (prevMeta && prevMeta !== m) prevMeta.remove()
+        if (typeof then === 'function') then()
+      }
+      m.onerror = () => { m.remove(); if (typeof then === 'function') then() }
+      document.head.appendChild(m)
+    }
+    s.onerror = () => s.remove()
+    document.head.appendChild(s)
+  }
+
   let priceTimer = null
   function startPriceSync() {
     if (priceTimer) return
@@ -696,6 +718,8 @@
         }
         a.onerror = () => a.remove()
         document.head.appendChild(a)
+        // 日志只在日志页可见，按需同步，省掉无谓的重绘
+        if (tab === 'logs') { syncLogs(() => render()); return }
         if (tab === 'market') render()
       }
       s.onerror = () => s.remove()
@@ -1149,7 +1173,8 @@
   /** modelRow 渲染列表模式下的一行：模型 / 类型 / 价格 / 缓存 / 供应商 / 标签 / 端点 / 分组。 */
   function modelRow(m) {
     const p = priceOf(m)
-    const on = !disabledModels.has(m.name)
+    // 列表行与卡片必须用同一套判据：分组级明细 + 宿主的整模型停用
+    const on = isOn(m)
     const groups = (m?.enable_groups || []).slice()
     const shown = groups.slice(0, 2)
     const restCount = Math.max(0, groups.length - shown.length)
@@ -1453,15 +1478,12 @@
   async function initDisabledByGroup() {
     disabledByGroup.clear()
     hostOff.clear()
-    // 旧版全局停用表一律作废：新状态只看分组级明细
-    disabledModels = new Set()
     // 1) 本机明细：页面自己记的分组级状态（写宿主会被降级成整模型停用，见 flushDisabled）
     let local = null
     try {
       const raw = localStorage.getItem(DISABLED_KEY)
       if (raw && raw.trim()) local = JSON.parse(raw)
     } catch { local = null }
-    if (!local) local = options.disabledByGroup
     if (typeof local === 'string' && local.trim()) {
       try { local = JSON.parse(local) } catch { local = null }
     }
@@ -1491,8 +1513,18 @@
   function applyHostOff() {
     const p = pricing()
     if (!p || !hostOff.size) return
+    const models = p.models || []
+    // 旧版「全不选」把每个模型的所有分组都写进了宿主 disabled，hostOff 于是覆盖全部模型。
+    // 那不是正常意图（谁也不会想把 109 个模型全关掉），判为旧数据：清掉宿主记录并放开，
+    // 否则侧栏分组会一直被锁成灰，连点全选都点不亮。
+    if (models.length && hostOff.size >= models.length) {
+      hostOff.clear()
+      disabledByGroup.clear()
+      bridge.call('neartoken:prefs', { op: 'set', disabled: [] }).catch(() => {})
+      return
+    }
     for (const name of [...hostOff]) {
-      const m = p.models.find((x) => x.name === name)
+      const m = models.find((x) => x.name === name)
       if (!m) continue
       const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
       if (all.length) disabledByGroup.set(name, new Set(all))
@@ -1764,7 +1796,7 @@
       asideSec('vendor', '供应商', vendorChips, true, marketVendors.size ? String(marketVendors.size) : ''),
       asideSec('quota', '定价类型', quotaChips, true, marketQuota !== 'all' ? '1' : ''),
       asideSec('endpoint', '端点类型', endpointChips, true, marketEndpoint !== 'all' ? '1' : ''))
-    const off = disabledModels.size
+    const off = new Set([...disabledByGroup.keys(), ...hostOff]).size
     const body = el('div', { class: 'market-body' },
       aside,
       el('div', { class: 'market-main' },
@@ -1772,8 +1804,8 @@
         el('div', { class: 'market-count', id: 'market-count', text: (p?.models?.length || 0) + ' 个模型' + (syncedAt() ? ' · 同步 ' + syncedAt() : '') }),
         el('div', { class: 'model-grid', id: 'market-list' }),
         el('p', { class: 'note', text: off
-          ? '已停用 ' + off + ' 个模型：只记在本页，magpie 的模型列表不受影响。点卡片可重新启用，或按「全选」。'
-          : '默认全选。点卡片切换启用状态（记在本机），高亮 = 已启用；magpie 的模型列表始终是站点全量。' })))
+          ? '已停用 ' + off + ' 个模型：某个模型的所有分组都关掉时，它会从 magpie 的模型列表隐藏；全部模型都关掉时只影响本页。点卡片可重新启用，或按「全选」。'
+          : '默认全选。点卡片切换启用状态；所有分组都关掉时该模型会从 magpie 列表隐藏，全部关掉则只影响本页。' })))
     const wrap = el('section', { class: 'market' },
       el('div', { class: 'market-top' }, search, tools),
       body)
@@ -2065,9 +2097,12 @@
         el('p', { class: 'note warn', text: data.reason === 'unreachable' ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' }))
     }
 
-    // 有逐条数据源但当前窗口为空：明确说明，而不是回落到聚合视图
-    const hasLiveSource = !!liveLogs && Array.isArray(liveLogs.rows)
-    if (hasLiveSource && liveLogs.rows.length === 0) {
+    // 只有插件真的写入过流水（at > 0）才算「有逐条数据源」。
+    // 占位文件是 { at: 0, rows: [] }，把它当成空窗口会让页面永远显示「没有逐条记录」。
+    const liveAt = Number(liveLogs?.at) || 0
+    const liveRows = Array.isArray(liveLogs?.rows) ? liveLogs.rows : null
+    const hasLiveSource = liveAt > 0 && !!liveRows
+    if (hasLiveSource && liveRows.length === 0) {
       return el('section', { class: 'logs' },
         el('h2', { class: 'logs-title', text: '通用日志' }),
         el('div', { class: 'logs-panel' },
@@ -2176,13 +2211,22 @@
           el('i', { style: 'width:' + Math.max(2, Math.round((m.tokens / total) * 100)) + '%;background:' + ['#5b8def', '#43b8a4', '#9b7ce0', '#54b26a', '#e0a44a', '#d47a9a', '#6fa8d6', '#c08bd0'][i2 % 8] })),
         el('div', { class: 'lg-dist-val', text: compact(m.tokens) + ' · ' + Math.round((m.tokens / total) * 100) + '%' })))) : null
 
+    // 没有逐条数据源时说清原因：插件还没拿到凭据 / 接口失败 / 站点没给
+    const meta = self.NEARTOKEN_LOGS_META
+    const why = (() => {
+      if (hasLiveSource) return ''
+      if (!meta || !meta.at) return '逐条流水还没写入：插件尚未拿到站点凭据（宿主调用余额或发一次请求后会自动补齐）。'
+      if (meta.ok === false) return '逐条流水读取失败：' + (meta.error || '未知原因') + '。'
+      if (meta.stage === 'no-key') return '逐条流水还没写入：插件尚未拿到站点凭据。'
+      return '逐条流水为空：站点这条令牌暂时没有记录。'
+    })()
     return el('section', { class: 'logs' },
       el('h2', { class: 'logs-title', text: '通用日志' }),
       el('div', { class: 'logs-panel' },
         toolbar, moreRow, statbar,
         el('div', { class: 'lg-table-wrap' }, table),
         pagerBar(rows.length)),
-      el('p', { class: 'note', text: '数字来自站点用量端点，按模型汇总；站点未提供逐条流水，故「流 / 请求体大小 / 耗时」留空。' }))
+      el('p', { class: 'note', text: why || '数字来自站点用量端点，按模型汇总；站点未提供逐条流水，故「流 / 请求体大小 / 耗时」留空。' }))
   }
 
   /** toggleModel 只翻转「当前视图分组」里的启用状态，同一模型在别组不受影响。 */
@@ -2191,6 +2235,8 @@
     if (!m) return
     const g = viewGroup(m)
     if (!g) return
+    // 选定分组时，只对真正属于该组的模型生效，避免把模型不存在的组记进停用表
+    if (marketGroup && !(m.enable_groups || []).includes(marketGroup)) return
     const off = new Set(disabledByGroup.get(name) || [])
     const blocked = hostOff.has(name)
     if (blocked || off.has(g)) {
@@ -2207,39 +2253,66 @@
   }
 
   /**
-   * setAll 全选 / 全不选：作用于当前视图分组。
+   * setAll 全选 / 全不选。
    *
-   * 「全不选」只关当前视图这一组（选定分组就是它，否则是每个模型最便宜的那组），
-   * 不把模型的所有分组一起关。理由在 flushDisabled：宿主没有分组维度，全关等于
-   * 把整个模型交给宿主隐藏，109 个模型全关时宿主拿到的是一张空表，供应商掉出。
+   * 两侧必须说同一件事，否则会出现「卡片未启用、侧栏分组还亮着」：
+   *   · 全选   = 清空所有停用记录，卡片与分组一起点亮；
+   *   · 全不选 = 每个模型的所有分组都关掉，卡片与分组一起变灰。
+   *
+   * 「全不选」不把这张全灰表交给宿主：宿主没有分组维度，收到 109 条就等于
+   * 把整张模型表清空，供应商会从 magpie 列表里消失——那是「看不见」，不是
+   * 「停用」。写入侧的上限保护见 flushDisabled。
    */
   async function setAll(enable) {
     const p = pricing()
     if (!p) return
-    for (const m of p.models) {
-      const g = marketGroup || cheapestGroup(m)
-      if (!g) continue
-      if (marketGroup && !(m.enable_groups || []).includes(marketGroup)) continue
-      const off = new Set(disabledByGroup.get(m.name) || [])
-      if (enable) off.delete(g)
-      else off.add(g)
-      if (off.size) disabledByGroup.set(m.name, off)
-      else disabledByGroup.delete(m.name)
-      // 全选时解除宿主的整模型停用
-      if (enable) hostOff.delete(m.name)
+    if (enable) {
+      disabledByGroup.clear()
+      hostOff.clear()
+      render()
+      await saveDisabled()
+      return
     }
-    if (enable) hostOff.clear()
+    for (const m of p.models) {
+      const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
+      if (!all.length) continue
+      disabledByGroup.set(m.name, new Set(all))
+    }
+    hostOff.clear()
     render()
     await saveDisabled()
   }
 
   /**
+   * hostPayload 算出要交给宿主的停用清单。
+   *
+   * 宿主按「模型」隐藏（没有分组维度），所以只交「所有分组都停用」的模型。
+   * 若全部模型都被关掉，整体交空表：空表会让供应商从 magpie 列表消失，
+   * 那种「看不见」比「停用」更难恢复，因此全灰只留在本页。
+   */
+  function hostPayload(plain, models) {
+    const out = []
+    let total = 0
+    for (const m of models || []) {
+      const name = m?.name
+      if (!name) continue
+      total++
+      const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
+      if (!all.length) continue
+      const off = plain[name]
+      if (!Array.isArray(off)) continue
+      if (all.every((g) => off.includes(g))) out.push({ model: name, groups: all })
+    }
+    if (total && out.length >= total) return { disabled: [], allOff: true }
+    return { disabled: out, allOff: false }
+  }
+
+  /**
    * saveDisabled 把启用状态落盘：分组明细写本机，整模型停用写宿主。
    *
-   * 宿主的模型清单没有分组维度——`neartoken-prefs.json` 的 disabled 里只要出现
-   * 一个模型，`HiddenModels()` 就把它整个剔出清单。所以这里只把「它的所有分组
-   * 都停用」的模型交给宿主；部分分组停用只留本机。否则在 A 组关掉会在 B 组一起
-   * 消失，全部关掉时宿主拿到的是一张空表，供应商就直接掉出列表了。
+   * 宿主的模型清单没有分组维度——disabled 里出现一个模型就整个剔出清单。
+   * 所以交给宿主的只有「所有分组都停用」的模型；全部模型都被关掉时交空表，
+   * 那种「全灰」只留在本页（见 hostPayload）。
    */
   let saveTimer = null
   async function flushDisabled() {
@@ -2248,15 +2321,7 @@
     try {
       localStorage.setItem(DISABLED_KEY, JSON.stringify(plain))
     } catch { /* 存不下就只保留本次会话的状态 */ }
-    const p = pricing()
-    const disabled = []
-    for (const [model, groups] of Object.entries(plain)) {
-      const m = p?.models?.find((x) => x.name === model)
-      const all = (m?.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
-      if (!all.length) continue
-      // 只有一组都没剩下时才交给宿主隐藏
-      if (all.every((g) => groups.includes(g))) disabled.push({ model, groups })
-    }
+    const { disabled } = hostPayload(plain, pricing()?.models || [])
     try {
       await bridge.call('neartoken:prefs', { op: 'set', disabled })
       lastError = ''
