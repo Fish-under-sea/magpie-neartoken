@@ -322,6 +322,8 @@ const groupRefOf = new Map()
 async function catalogUnsafe() {
   const groupsOut = new Map()
   const { env, status, bundled } = await loadPricingEnv()
+  // bundled 为真表示这份数据来自包内快照（冷启动或站点抓取失败），不是实时
+  lastCatalogBundled = Boolean(bundled)
   const rows = Array.isArray(env?.data) ? env.data : []
   const refs = env?.group_refs && typeof env.group_refs === 'object' ? env.group_refs : {}
   const ratios = env?.group_ratio && typeof env.group_ratio === 'object' ? env.group_ratio : {}
@@ -419,10 +421,47 @@ async function catalogUnsafe() {
  *   2. 异常时用包内快照重建一次（不带页面偏好过滤）；
  *   3. 仍为空则直接用包内快照的原始模型名，最差也要把模型表撑起来。
  */
+/**
+ * 上一次「站点实时」拿到的模型表 + 本次数据来源。
+ *
+ * 宿主的 KeepPluginsListed 每次重列都会对比前后两次列表：少了哪个模型，
+ * 就把用户对这个模型的选择移除（dropGonePluginPicks），并把下次重列提前到
+ * 5 分钟后 —— 用户看到的就是「过几分钟供应商掉一次」。
+ *
+ * 所以这里要保证两件事：
+ *   1. 列表单调不减：站点偶发少给几个模型时，用上一次的补齐；
+ *   2. 本次不是实时数据时，在返回表上打 magpie.fellBack 标记，宿主据此
+ *      跳过对比（pluginListedIDs 会 continue 掉 FellBack 的 provider）。
+ */
+let lastCatalogSource = 'empty'
+let lastGoodCatalog = null
+/** catalogUnsafe 这次用的数据是不是包内快照（不是站点实时）。 */
+let lastCatalogBundled = true
+
+/**
+ * mergeModelsWithLastGood 用上一次实时表补齐本次缺的模型。
+ *
+ * 宿主 KeepPluginsListed 每次重列都对比前后两次列表：少一个模型就把用户对它的
+ * 选择移除，并把下次重列提前到 5 分钟——用户看到的就是「过几分钟掉一次」。
+ * 站点偶发少给几个模型时靠这里补齐，避免被误判成「模型下架」。
+ */
+function mergeModelsWithLastGood(table, lastGood) {
+  if (!table || !lastGood) return { table, restored: 0 }
+  let restored = 0
+  for (const id of Object.keys(lastGood)) {
+    if (!table[id]) { table[id] = lastGood[id]; restored += 1 }
+  }
+  return { table, restored }
+}
+
 async function catalog() {
   try {
     const out = await catalogUnsafe()
-    if (out && Object.keys(out).length) return out
+    if (out && Object.keys(out).length) {
+      // bundled 时数据来自包内快照：模型集合可能过时，不能当「实时真相」
+      lastCatalogSource = lastCatalogBundled ? 'snapshot' : 'live'
+      return out
+    }
   } catch { /* 落到下面的快照兜底 */ }
   try {
     const snap = readBundledPricing()
@@ -439,8 +478,12 @@ async function catalog() {
         capabilities: { toolcall: true, output: ['text'], attachment: false, input: { text: true } },
       }
     }
-    if (Object.keys(out).length) return out
+    if (Object.keys(out).length) {
+      lastCatalogSource = 'snapshot'
+      return out
+    }
   } catch { /* 连快照都读不到 */ }
+  lastCatalogSource = 'empty'
   return {}
 }
 
@@ -1104,7 +1147,30 @@ export default async function neartoken(input, options) {
         try {
           const out = await catalog()
           const safe = out && typeof out === 'object' ? out : {}
-          writeHealth({ ok: true, count: Object.keys(safe).length, ms: Date.now() - startedAt })
+
+          // 保护 1：列表单调不减。站点偶发少给几个模型时，用上一次实时表补齐，
+          // 否则宿主会把这些「消失」的模型从用户选择里移除。
+          const merged = mergeModelsWithLastGood(safe, lastGoodCatalog)
+          const restored = merged.restored
+
+          // 保护 2：本次不是实时数据（用了包内快照或彻底失败）时打标记，
+          // 宿主看到 magpie.fellBack 就不会拿这份列表去判断「谁不见了」。
+          if (lastCatalogSource !== 'live') {
+            try { safe[Symbol.for('magpie.fellBack')] = true } catch { /* 标记失败不影响返回 */ }
+          } else if (Object.keys(safe).length) {
+            // 只在实时数据上更新基线，别把兜底数据当成「新的真相」
+            const snapshotOfGood = {}
+            for (const [id, m] of Object.entries(safe)) snapshotOfGood[id] = m
+            lastGoodCatalog = snapshotOfGood
+          }
+
+          writeHealth({
+            ok: true,
+            count: Object.keys(safe).length,
+            ms: Date.now() - startedAt,
+            source: lastCatalogSource,
+            restored,
+          })
           return safe
         } catch (error) {
           writeHealth({ ok: false, count: 0, ms: Date.now() - startedAt, error: String(error && error.message ? error.message : error) })

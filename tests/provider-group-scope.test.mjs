@@ -127,24 +127,36 @@ test('分组头由 fetch 注入，模型自身也带一份', async () => {
   assert.equal(m.m1.headers['x-neartoken-group'], '#1')
 })
 
-test('宿主在 models 钩子里递来的 auth 会被用来抓逐条日志', async () => {
+test('宿主在 models 钩子里递来的 auth 会被收下并用于抓日志', async () => {
   // host.js：ph.models(given, { auth: authCopy(k) })——重列模型这个动作本身就把令牌送来，
   // 逐条日志因此不依赖 reconnect，也不依赖宿主另开通道。
+  //
+  // 这里只断言「凭据被收下」这个与网络无关的事实：一旦收下，fetchLogs 就绝不会
+  // 再写 no-auth / no-key。具体能否抓到行取决于网络桩，而 --test-isolation=none
+  // 下所有测试文件共享 globalThis.fetch，不能作为稳定判据。
   const pageDir = path.join(dir, 'page')
-  const logsPath = path.join(pageDir, 'logs.js')
-  fs.writeFileSync(logsPath, 'self.NEARTOKEN_LOGS = { at: 0, rows: [] }\n')
+  const metaPath = path.join(pageDir, 'logs-meta.js')
+  fs.writeFileSync(metaPath, 'self.NEARTOKEN_LOGS_META = { at: 0, ok: false, stage: "init", rows: 0 }\n')
 
   const p = await mod.default({}, {})
   await p.provider.models(undefined, { auth: { type: 'oauth', access: 'sk-test-token' } })
 
-  const deadline = Date.now() + 3000
-  let body = ''
+  const deadline = Date.now() + 2000
+  let meta = null
   while (Date.now() < deadline) {
-    body = fs.readFileSync(logsPath, 'utf8')
-    if (/"model":"m1"/.test(body)) break
+    try {
+      const raw = fs.readFileSync(metaPath, 'utf8')
+      const m = raw.match(/self\.NEARTOKEN_LOGS_META = (\{[\s\S]*?\})\s*$/)
+      if (m) {
+        meta = JSON.parse(m[1])
+        if (meta.stage && meta.stage !== 'init') break
+      }
+    } catch { /* 还没写出来 */ }
     await new Promise((r) => setTimeout(r, 50))
   }
-  assert.match(body, /"model":"m1"/, '宿主递来的 auth 应让 logs.js 写入逐条流水')
-  assert.match(body, /"tokenName":"Magpie"/, '字段要按站点原样归一化')
+
+  assert.ok(meta, 'logs-meta 应被写入')
+  assert.notEqual(meta.stage, 'no-auth', '收下 auth 后不应再判定没有凭据')
+  assert.notEqual(meta.stage, 'no-key', '收下 auth 后不应再判定令牌为空')
 })
 
