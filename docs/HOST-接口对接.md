@@ -132,12 +132,26 @@
 
 - 插件在场时，宿主 `pluginOwnsProvider()` 为真，模型表**唯一来源是插件 `provider.models()`**；宿主不再 `provider.Save` 或 `catalog.SaveLive`（`handoff.go`）。
 - 停用模型：宿主 `pluginCatalog` 调 `modelFilter("neartoken")` → `LoadPrefs().ModelIDs()`，只剔除模型，**不删供应商**。
+- **插件不再二次过滤（1.1.2 起）**：`provider.models()` 一律返回站点全量模型表，停用完全由宿主 `modelFilter` 负责。两份真相会互相打架——宿主剔光而插件保留 → 「有卡片、无模型」；插件剔光而宿主不知道 → 空表 → 掉出。
 - 插件 `models()` 必须在宿主等待时限内返回。宿主补丁里相关时限：`pluginCatalog` 无显式时限，`handOver` 30s，`refresh` 25s，`connect` 40s。
 
-### 6.1 插件侧保障（1.0.x 已做，1.0.0 基线需确认）
+### 6.1 插件侧保障
 
-- `catalog()` 任何异常回退到包内快照，`models()` 外层再兜底，绝不 reject。
+- `catalog()` 任何异常回退到包内快照，`models()` 外层再兜底，绝不 reject、绝不返回空表。
 - 冷启动不等网络，先给包内快照。
+- 页面只把「所有分组都停用」的模型写进 `disabled`；全部模型都被关掉时写空表（全灰只留本页），避免宿主拿到空表把供应商隐藏。
+
+### 6.2 重列节奏（宿主现状）
+
+| 触发 | 时机 | 代码 |
+| --- | --- | --- |
+| 启动后首次 | 1 分钟后 | `plugin_relist.go:33` |
+| 定期重列 | 每小时 | `plugin_relist.go:32`、`:50` |
+| 掉了 pick 时补一次 | 5 分钟后 | `plugin_relist.go:34` |
+| 手动「刷新 / 获取模型」 | 立即 | `plugins.go:552-553` → `plugin.Providers(ctx)` |
+| 插件列表 / 登录态变化 | `Cached()` 后台重列 | `providers.go:667,709-726` |
+
+插件页刷新**不会**触发宿主重列——已提 `FISH-DOCK-Plugins#36` 需求一（让 `neartoken:refresh` 顺带调一次 `plugin.Providers(ctx)`）。
 
 ## 七、插件运行时在插件目录写入的文件（宿主只读引用）
 

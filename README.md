@@ -6,13 +6,13 @@
 
 ## 下载
 
-当前版本：**1.1.1**。这是 NearToken 独立 npm 包的版本；magpie 定制宿主的对接要求见 [`docs/HOST-接口对接.md`](docs/HOST-接口对接.md)，宿主升级目标 **2.2.2** 属于另一仓库和发行物。
+当前版本：**1.1.2**。这是 NearToken 独立 npm 包的版本；magpie 定制宿主的对接要求见 [`docs/HOST-接口对接.md`](docs/HOST-接口对接.md)，宿主升级目标 **2.2.2** 属于另一仓库和发行物。
 
 | 方式 | 命令 / 入口 |
 | --- | --- |
 | npm（推荐） | `magpie plugin add @fish-under-sea/magpie-neartoken` |
 | GitHub 仓库 | `magpie plugin add github:Fish-under-sea/magpie-neartoken` |
-| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.1.1.tgz`，解包后把目录添进「插件」页 |
+| 离线包 | 在 [Releases](https://github.com/Fish-under-sea/magpie-neartoken/releases) 下载 `fish-under-sea-magpie-neartoken-1.1.2.tgz`，解包后把目录添进「插件」页 |
 
 装完在 magpie 的「插件」页打开 NearToken。卸载就是删掉这个包，magpie 的其它部分不受影响。
 
@@ -106,6 +106,34 @@
 - **模型选择不重做。** magpie 已经有供应商、模型、路由、失败切换这一整套；插件只把站点目录写进供应商，剩下的交回窗口。
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
+
+## 1.1.2 单一真相：停用只由宿主过滤 · 清掉旧 options
+
+这一版把「谁来决定模型出现」收敛成一个答案。
+
+### 之前为什么会互相打架
+
+停用状态曾经有**两份**：宿主 `pluginCatalog` 按 `neartoken-prefs.json` 剔一次，插件 `provider.models()` 又按 `page/prefs.json` 剔一次。两边不同步时：
+
+- 宿主剔光、插件还留着 → 供应商「有卡片、无模型」；
+- 插件剔光、宿主不知道 → 空表 → 供应商掉出。
+
+### 现在
+
+- `provider.models()` **一律返回站点全量**，不再读任何偏好文件；停用完全交给宿主 `modelFilter`。
+- 插件彻底不再读插件 options（`disabledModels` / `disabledGroups` / `enabledByGroup` / `disabledByGroup`），页面启动也不再 `bridge.options.get()`。旧版写进宿主 `plugins.json` 的那几个键变成纯历史，插件侧不再受其影响。
+- 其中 `options.disabledGroups` 是隐患：它曾能**静默过滤整组模型**，是「模型数忽多忽少」的现成来源，现已移除。
+- `page/logs-meta.js` 暴露逐条日志抓取阶段（`no-auth` / `no-key` / `no-list` / `ok` / `error`），页面据此说清「为什么没有日志」。
+
+### 同时提交给宿主的两条 issue
+
+- [FISH-DOCK-Plugins#36](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues/36)：重列钩子（`neartoken:refresh` 顺带 `plugin.Providers`）、`handOver` 删除防抖、`PrefModel.Groups` 参与隐藏判定、旧 options 迁移清理。
+- [FISH-DOCK-Plugins#37](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues/37)：逐条日志数据来源（`/api/dsh/device/usage` 无 rows，`/api/log/token` 有）+ 宿主日志落盘位置。
+
+### 已知边界
+
+- 宿主没有 `neartoken:prefs` 时，停用只在本页生效，不会影响 magpie 的模型列表。
+- 分组粒度的明细只能存本页（`localStorage`）；宿主只表达「整模型停用」。
 
 ## 1.1.1 供应商掉出的根因修掉 · 并入 1.0.1 / 1.0.2
 

@@ -1,66 +1,66 @@
 # 废弃接口与字段清单
 
-> 版本基线：插件 `1.0.0`（工作区已回退到 `e831957`）。
-> 目的：列出 1.0.x 之前写过、现在不再作为宿主对接依据的接口、字段与文件，并标明代码位置，便于后续清理。
-> 本文只记录事实，**本轮不删除代码**。删除需等宿主确认不再读取旧 `options` 后再做。
+> 版本基线：插件 `1.1.2`（以 `1.0.0` 为基线，叠加 1.1.x 修复）。
+> 目的：列出早期写过、现在已不再使用的接口、字段与文件，并标明**当前状态**与代码位置。
+> 2026-11-07 这轮已把 D1–D8 从代码里移除；D9、D10 保留但用途收窄。
 
 ## 一、总表
 
-| 编号 | 名称 | 类型 | 现状 | 代码位置（当前工作区） | 替代 |
+| 编号 | 名称 | 类型 | 状态 | 原代码位置 | 替代 |
 | --- | --- | --- | --- | --- | --- |
-| D1 | `options.disabledModels` | 插件 options 字段 | 页面仍读取，provider 仍过滤 | `index.mjs:728`、`page/app.js:153-154` | `neartoken:prefs`（`disabled`） |
-| D2 | `options.disabledGroups` | 插件 options 字段 | provider 仍过滤分组 | `index.mjs:727`、`:341` | `neartoken:prefs`（`disabled[].groups`） |
-| D3 | `options.enabledByGroup` | 插件 options 字段（0.6.7） | provider 仍读取；页面写回时删除 | `index.mjs:749`、`page/app.js:1432` | `neartoken:prefs` |
-| D4 | `options.disabledByGroup` | 插件 options 字段（0.6.8 起） | provider 读取；页面兜底读取 | `index.mjs:748`、`page/app.js:1466` | `neartoken:prefs` |
-| D5 | `bridge.options.get()` 读开关 | 页面调用 | 启动时读取，仅作兜底 | `page/app.js:149` | `neartoken:prefs {op:"get"}` |
-| D6 | `neartoken:prefs {get:true}` | 旧页面调用形状 | 已改为 `{op:"get"}` | 1.0.0 原 `page/app.js` | `{op:"get"}` |
-| D7 | `neartoken:prefs {set:{…}}` | 旧页面调用形状（载荷为「模型→分组数组」对象） | 宿主不认，已改 | 1.0.0 原 `page/app.js` | `{op:"set", disabled:[…]}` |
-| D8 | `page/prefs.json` 读取 | 插件读自己页面目录的文件 | 插件 `readPrefs()` 仍读取，与宿主过滤重复 | `index.mjs:286-293` | `neartoken:prefs {op:"get"}` |
-| D9 | `localStorage` 键 `neartoken:disabledByGroup` | 页面本机存储 | 宿主不可用时的兜底 | `page/app.js:1440`、`:2218` | `neartoken:prefs` |
-| D10 | `page/groups.js` 作为过滤输入 | 文件 | 仅用于页面分组展示，不再参与 provider 过滤 | `index.mjs:394-398` | —（保留，仅收窄用途） |
+| D1 | `options.disabledModels` | 插件 options 字段 | **已移除读取** | 原 `index.mjs` `asSet(options?.disabledModels)` | 宿主 `neartoken-prefs.json` → `HiddenModels` |
+| D2 | `options.disabledGroups` | 插件 options 字段 | **已移除读取**（这条曾静默过滤整组，是「模型数忽多忽少」的隐患） | 原 `index.mjs` `catalogUnsafe` 的 `disabledGroups.has(name)` | 同上 |
+| D3 | `options.enabledByGroup` | 插件 options 字段（0.6.7） | **已移除读取** | 原 `index.mjs` `readGroupMap(options?.enabledByGroup)` | `neartoken:prefs` |
+| D4 | `options.disabledByGroup` | 插件 options 字段（0.6.8 起） | **已移除读取** | 原 `index.mjs`、`page/app.js` 兜底 | `neartoken:prefs` |
+| D5 | `bridge.options.get()` | 页面调用 | **已移除** | 原 `page/app.js` 启动段 | `neartoken:prefs {op:"get"}` |
+| D6 | `neartoken:prefs {get:true}` | 旧调用形状 | **已移除** | 1.0.0 页面 | `{op:"get"}` |
+| D7 | `neartoken:prefs {set:{…}}` | 旧调用形状 | **已移除** | 1.0.0 页面 | `{op:"set", disabled:[…]}` |
+| D8 | `page/prefs.json` 参与过滤 | 插件读文件 | **已移除**（`readPrefs()` 删除） | 原 `index.mjs:readPrefs` | 宿主 `modelFilter` 唯一负责 |
+| D9 | `localStorage` 键 `neartoken:disabledByGroup` | 页面本机存储 | 保留：分组级明细的唯一载体 | `page/app.js` | `neartoken:prefs`（宿主只存整模型停用） |
+| D10 | `page/groups.js` | 文件 | 保留：只用于页面画分组 | `index.mjs:writeGroups` | — |
 
-## 二、说明
+## 二、这轮为什么必须移除
 
-### D1–D4：插件 options 通道
+### options 通道会让供应商闪断
 
-早期版本把启停状态写进插件 options（`magpie.options.set`）。宿主侧任何 options 变化都会让插件重建，供应商因此在列表里闪断或消失，这是「掉出列表」的已知触发源之一。
+页面写 options 会让宿主重建插件宿主（`SetPageOptions` → 插件重启）。旧的启停实现把状态写在 options 里，于是「改一个开关 → 插件重启 → 宿主重新列举 → 供应商在列表里闪一下」。这条链历史上被反复误判成「掉出」，实际是我们自己制造的。
 
-- 现状：`index.mjs` 的 `neartoken` 导出函数仍读取这些字段并参与过滤。
-- 页面写入时已删除 `enabledByGroup`、清空 `disabledModels`，但**读取侧仍兼容**。
-- 清理条件：宿主 `neartoken:prefs` 真机验证通过，且不再存在依赖旧 options 的页面。
+现在启停只走 `neartoken:prefs`（宿主写 `neartoken-prefs.json`，**不重建插件**）。
 
-### D5：页面读 `bridge.options.get()`
+### 两份真相会互相打架
 
-- `page/app.js` 启动时仍读取 options，作为 `initDisabledByGroup()` 的兜底。
-- 清理条件：同 D1–D4。
+旧实现里，插件 `provider.models()` 自己还会按 `page/prefs.json` 过滤一遍，宿主 `pluginCatalog` 又按 `neartoken-prefs.json` 过滤一遍。两份数据不同步时：
 
-### D6、D7：旧 prefs 调用形状
+- 宿主剔光、插件还留着 → 供应商「有卡片、无模型」；
+- 插件剔光、宿主不知道 → 供应商直接空表 → 掉出。
 
-- 旧页面写的是 `{get:true}` 与 `{set: 模型→分组数组}`。宿主 `prefs.go` 只认 `op` 字段，旧形状会被当作参数错误。
-- 当前页面已改为宿主协议，旧形状只存在于 1.0.0 历史中。
+**现在只留宿主这一层**：`pluginCatalog` → `modelFilter` → `LoadPrefs().ModelIDs()`。插件只负责把「所有分组都停用」的模型写进 `disabled`，其余一律返回全量。
 
-### D8：`page/prefs.json`
+## 三、保留项说明
 
-- 宿主补丁 `pagePrefsName = "prefs.json"` 会把偏好镜像到插件 `page/` 目录，但页面沙箱不能读取文件，且镜像是 JSON 而非 `<script>`。
-- 插件 `readPrefs()` 读取它并参与 provider 过滤；宿主 `pluginCatalog` 已通过 `modelFilter` 完成过滤，插件这一层与之重复。
+### D9 `localStorage`
 
-### D9：`localStorage`
+宿主持久化只有「模型」维度，分组粒度的明细只能留在页面本机。因此 `localStorage` 仍是分组级状态的主载体：
 
-- 宿主可用时不再写入。页面只在 `neartoken:prefs` 调用失败时才写本机存储。
+- 写：每次 `flushDisabled` 都写全量明细；
+- 读：启动时先读本机，再用宿主 `disabled` 把「整模型停用」展开成全组停用（`hostOff`）。
 
-### D10：`groups.js`
+### D10 `groups.js`
 
-- 仍由插件写入，页面用它画分组。不再参与 provider 过滤。保留，列在这里是为了说明用途已收窄。
+仍由插件运行时写入，页面用它画分组胶囊。它不再参与 provider 过滤，也不再影响模型表。
 
-## 三、不在本清单内（仍在用）
+## 四、仍在用（不在本清单）
 
-- `neartoken:state / connect / cancel / open / disconnect / refresh / usage / topup / prefs`
-- `usage.rows`（逐条流水契约）
-- `page/pricing.js`、`page/logs.js`、`page/aff.js`、`page/latest.js`
+- `neartoken:state / connect / cancel / open / disconnect / refresh / usage / topup / prefs`（9 条，均在 `magpie.calls` 声明）
+- `usage.rows`（逐条流水契约；实测站点该端点无 rows，插件自取 `/api/log/token`）
+- `page/pricing.js`、`page/logs.js`、`page/logs-meta.js`、`page/aff.js`、`page/latest.js`、`page/health.js`
 
-## 四、清理顺序（建议，待确认）
+## 五、宿主侧残留（等宿主处理）
 
-1. 宿主 `neartoken:prefs` 真机通过 → 删除 D5、D9 兜底分支。
-2. provider 删除 D1–D4 的 options 读取，过滤只保留宿主 `modelFilter` 这一层。
-3. 删除 D8 `readPrefs()`，避免与宿主过滤重复。
-4. 每一步各发一个版本，并在 `HOST-接口对接.md` 的验收段落记录。
+宿主 `plugins.json` 里仍保留旧版写入的键：
+
+```json
+"options": {"disabledByGroup": {...}, "disabledModels": []}
+```
+
+插件已不读它们，留着无害，但会误导排查。已在 `FISH-DOCK-Plugins#36` 提出由宿主做一次迁移清理（见该 issue 需求四）。
