@@ -150,7 +150,10 @@
       startHotReload()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
-        if (visible) load().catch(() => {})
+        if (!visible) return
+        // 回到前台别每次都问 state：那会顺带触发宿主的 settle()（可能删 provider 条目）
+        if (Date.now() - lastStateAt > STATE_TTL) load().catch(() => {})
+        else refreshUsageOnly().catch(() => {})
       })
     } catch (error) {
       fail(String(error && error.message ? error.message : error))
@@ -181,19 +184,45 @@
   }
 
   async function load() {
+    lastStateAt = Date.now()
     view = await call('neartoken:state')
     if (view.configured && !topupInfo) topupInfo = await call('neartoken:topup')
     if (view.configured && !windows.has(span)) windows.set(span, await call('neartoken:usage', { range: span }))
     render()
   }
 
-  /** tick 每秒跑一次：等确认时勤一点，连上之后只补读看板与钱包。 */
+  /**
+   * 多久才重新问一次 neartoken:state。
+   *
+   * 宿主的 state() 第一行就是 settle()：命中时会 handOver → dropHostProvider，
+   * 把宿主侧的 provider 条目删掉。以前 tick 每 60 秒调一次 load()，等于每分钟
+   * 给宿主一次删除机会——这正是「页面隔一会刷新一下就掉列表」的那条链。
+   * 现在只在启动、显式动作和每 10 分钟问一次；其余刷新只读用量。
+   */
+  const STATE_TTL = 10 * 60 * 1000
+  let lastStateAt = 0
+
+  /** refreshUsageOnly 只补读看板，不碰 neartoken:state。 */
+  async function refreshUsageOnly() {
+    if (!view || !view.configured) return
+    try {
+      if (!topupInfo) topupInfo = await call('neartoken:topup')
+      windows.set(span, await call('neartoken:usage', { range: span }))
+      render()
+    } catch { /* 读不到就保持上一份 */ }
+  }
+
+  /** tick 每秒跑一次：等确认时勤一点，连上之后只补读看板。 */
   function tick() {
     tickCount += 1
     const counting = view && view.pending
     // 等确认时每秒问一次：站点那边一点批准，这边下一拍就能接上
     if (counting) load().catch(() => {})
-    else if (tickCount % 60 === 0) load().catch(() => {})
+    else if (tickCount % 60 === 0) {
+      // 每 60 秒只刷用量；state 每 10 分钟才问一次（见 STATE_TTL）
+      if (Date.now() - lastStateAt > STATE_TTL) load().catch(() => {})
+      else refreshUsageOnly().catch(() => {})
+    }
     if (counting) paintCountdown()
   }
 
@@ -2215,9 +2244,10 @@
     const meta = self.NEARTOKEN_LOGS_META
     const why = (() => {
       if (hasLiveSource) return ''
-      if (!meta || !meta.at) return '逐条流水还没写入：插件尚未拿到站点凭据（宿主调用余额或发一次请求后会自动补齐）。'
+      if (!meta || !meta.at) return '逐条流水还没写入：插件尚未拿到站点凭据。在插件页重新连接一次即可补齐。'
       if (meta.ok === false) return '逐条流水读取失败：' + (meta.error || '未知原因') + '。'
-      if (meta.stage === 'no-key') return '逐条流水还没写入：插件尚未拿到站点凭据。'
+      if (meta.stage === 'no-auth') return '逐条流水还没写入：插件尚未拿到站点凭据。在插件页重新连接一次，或让 magpie 发一次请求即可自动补齐。'
+      if (meta.stage === 'no-key') return '逐条流水还没写入：凭据里没有可用的令牌，请重新连接。'
       return '逐条流水为空：站点这条令牌暂时没有记录。'
     })()
     return el('section', { class: 'logs' },
