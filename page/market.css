@@ -900,6 +900,8 @@
 
 /* 流列：蓝色「流」+ 灰色 t/s，和上游一致 */
 .logs .lg-flow { color: #4a9eff; line-height: 18px; }
+/* 非流式：蓝色改灰，和上游一致 */
+.logs .lg-flow.off { color: var(--nt-muted); }
 .logs .lg-sub { color: var(--nt-muted); }
 /* 模型行 + 映射按钮 */
 .logs .lg-model-row { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }

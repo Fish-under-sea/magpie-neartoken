@@ -155,6 +155,8 @@
         : (typeof raw === 'string' && raw.trim() ? new Set((() => { try { return JSON.parse(raw) } catch { return [] } })()) : new Set())
       await initDisabledByGroup()
       await load()
+      // 宿主的「整模型停用」要等目录加载完才能展开成分组停用
+      if (hostOff.size) { applyHostOff(); render() }
       startHotReload()
       clock = setInterval(tick, 1000)
       bridge.onVisibility((visible) => {
@@ -1393,9 +1395,18 @@
 
   /**
    * disabledByGroup: 模型 → 被停用的分组集合。只记例外，默认全部分组启用。
-   * 这样写进 options 的内容极小；即使宿主存回来的格式不对，也不会把模型整体判成停用。
+   * 这份明细只给页面自己用（本机存储），不直接交给宿主。
    */
   const disabledByGroup = new Map()
+
+  /**
+   * hostOff: 宿主记录为「整个模型停用」的模型名。
+   *
+   * 宿主的模型清单没有分组这一维：`neartoken-prefs.json` 的 disabled 里出现
+   * 一个模型，`HiddenModels()` 就把它整个剔出清单。所以这里单独记一份，
+   * 用它在页面上把这些模型显示成全组停用。
+   */
+  const hostOff = new Set()
 
   /** 当前视图下这个模型用哪个分组判定启停：选定分组就用它，否则用最便宜那一组。 */
   function viewGroup(m) {
@@ -1404,6 +1415,7 @@
 
   /** 模型在当前视图分组里是否启用。 */
   function isOn(m) {
+    if (hostOff.has(m?.name)) return false
     const off = disabledByGroup.get(m?.name)
     return !off || !off.has(viewGroup(m))
   }
@@ -1436,52 +1448,55 @@
     return payload
   }
 
-  /** 读回分组级停用表。只认「模型名 → 分组数组」的合法形状，其余当没有记录。 */
+  /** 读回分组级停用表。明细来自本机存储；宿主的记录只有「整模型停用」。 */
   const DISABLED_KEY = 'neartoken:disabledByGroup'
-  /**
-   * 宿主 neartoken:prefs（op:get）回 {disabled:[{model,groups}], …}。
-   * 宿主不可用时回本机存储。旧版 options.disabledByGroup 只在两者都没有时兜底。
-   */
   async function initDisabledByGroup() {
-    let stored = null
+    disabledByGroup.clear()
+    hostOff.clear()
+    // 旧版全局停用表一律作废：新状态只看分组级明细
+    disabledModels = new Set()
+    // 1) 本机明细：页面自己记的分组级状态（写宿主会被降级成整模型停用，见 flushDisabled）
+    let local = null
+    try {
+      const raw = localStorage.getItem(DISABLED_KEY)
+      if (raw && raw.trim()) local = JSON.parse(raw)
+    } catch { local = null }
+    if (!local) local = options.disabledByGroup
+    if (typeof local === 'string' && local.trim()) {
+      try { local = JSON.parse(local) } catch { local = null }
+    }
+    if (local && typeof local === 'object' && !Array.isArray(local)) {
+      for (const [name, list] of Object.entries(local)) {
+        if (!name || !Array.isArray(list)) continue
+        const groups = list.map((g) => String(g ?? '').trim()).filter(Boolean)
+        if (groups.length) disabledByGroup.set(String(name), new Set(groups))
+      }
+    }
+    // 2) 宿主记录：disabled 里出现一个模型，就是「整模型停用」，没有分组维度
     try {
       const view = await bridge.call('neartoken:prefs', { op: 'get' })
       if (view && typeof view === 'object' && Array.isArray(view.disabled)) {
-        stored = {}
         for (const item of view.disabled) {
           if (!item || typeof item.model !== 'string' || !item.model) continue
-          const groups = Array.isArray(item.groups) && item.groups.length
-            ? item.groups
-            : (cheapestGroupOfName(item.model) ? [cheapestGroupOfName(item.model)] : [])
-          if (groups.length) stored[item.model] = groups
+          hostOff.add(item.model)
         }
       }
-    } catch { /* 宿主还没这个调用，走本机存储 */ }
-    if (!stored) {
-      try {
-        const raw = localStorage.getItem(DISABLED_KEY)
-        if (raw && raw.trim()) stored = JSON.parse(raw)
-      } catch { stored = null }
-    }
-    if (!stored) stored = options.disabledByGroup
-    if (typeof stored === 'string' && stored.trim()) {
-      try { stored = JSON.parse(stored) } catch { stored = null }
-    }
-    disabledByGroup.clear()
-    // 旧版全局停用表一律作废：新状态只看 disabledByGroup
-    disabledModels = new Set()
-    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return
-    for (const [name, list] of Object.entries(stored)) {
-      if (!name || !Array.isArray(list)) continue
-      const groups = list.map((g) => String(g ?? '').trim()).filter(Boolean)
-      if (groups.length) disabledByGroup.set(String(name), new Set(groups))
-    }
+    } catch { /* 宿主还没有这个调用：只用本机明细 */ }
   }
 
-  /** 宿主只存了模型名时，用目录里这个模型最便宜的分组补全 groups（页面按分组判启停）。 */
-  function cheapestGroupOfName(name) {
-    const m = pricing()?.models.find((x) => x.name === name)
-    return m ? cheapestGroup(m) : ''
+  /**
+   * applyHostOff 把「宿主整模型停用」展开成该模型所有分组停用。
+   * 目录没加载时算不出分组，所以放在 load() 之后再调。
+   */
+  function applyHostOff() {
+    const p = pricing()
+    if (!p || !hostOff.size) return
+    for (const name of [...hostOff]) {
+      const m = p.models.find((x) => x.name === name)
+      if (!m) continue
+      const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
+      if (all.length) disabledByGroup.set(name, new Set(all))
+    }
   }
 
   /** 官网给分组的说明；没有就返回空串，不编内容。 */
@@ -2050,6 +2065,18 @@
         el('p', { class: 'note warn', text: data.reason === 'unreachable' ? '暂时读不到站点的用量数据。' : '站点未提供用量统计。' }))
     }
 
+    // 有逐条数据源但当前窗口为空：明确说明，而不是回落到聚合视图
+    const hasLiveSource = !!liveLogs && Array.isArray(liveLogs.rows)
+    if (hasLiveSource && liveLogs.rows.length === 0) {
+      return el('section', { class: 'logs' },
+        el('h2', { class: 'logs-title', text: '通用日志' }),
+        el('div', { class: 'logs-panel' },
+          toolbar, moreRow, statbar,
+          el('div', { class: 'lg-table-wrap' }, el('p', { class: 'lg-empty', text: '这个窗口没有逐条记录。' })),
+          pagerBar(0)),
+        el('p', { class: 'note', text: '插件已连上站点日志接口，当前时间窗口没有记录。' }))
+    }
+
     if (detailRows && detailRows.length) {
       const colsD = ['时间', '令牌', '模型', '流', 'Token', '请求体大小', '费用', '耗时', '详情']
       const pageRowsD = pageSlice(detailRows)
@@ -2084,9 +2111,13 @@
             [['请求模型', r.model], ['上游请求模型', r.upModel], ['响应模型', r.respModel]].map(([k, v]) =>
               el('div', { class: 'lg-map-row' }, el('span', { class: 'lg-map-k', text: k }), el('span', { class: 'lg-map-v', text: v || '—' }))) ) : null),
         el('span', { class: 'lg-cell-stack' },
-          el('span', { class: 'lg-flow', text: '流' }),
+          el('span', { class: 'lg-flow' + (r.isStream === false ? ' off' : ''), text: r.isStream === false ? '非流' : '流' }),
           el('span', { class: 'lg-sub' }, r.tps ? el('span', { text: r.tps + ' t/s' }) : dash('sm'))),
-        el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
+        el('span', { class: 'lg-cell-stack' },
+          el('span', { class: 'num', text: (r.input != null ? fmtNum(r.input) : '—') + ' / ' + (r.output != null ? fmtNum(r.output) : '—') }),
+          r.cache != null && Number(r.cache) > 0
+            ? el('span', { class: 'lg-sub', text: '缓存 ' + fmtNum(r.cache) })
+            : null),
         el('span', { class: 'num' }, r.bytes != null ? fmtBytes(r.bytes) : dash()),
         el('span', { class: 'lg-cell-stack' },
           el('span', { class: 'lg-pill lg-cost', text: logPrivate ? '••••' : (r.cost || '—') })),
@@ -2161,63 +2192,75 @@
     const g = viewGroup(m)
     if (!g) return
     const off = new Set(disabledByGroup.get(name) || [])
-    if (off.has(g)) off.delete(g)
-    else off.add(g)
+    const blocked = hostOff.has(name)
+    if (blocked || off.has(g)) {
+      // 现在显示为关 → 打开：先解除宿主的「整模型停用」，再打开当前分组
+      hostOff.delete(name)
+      off.delete(g)
+    } else {
+      off.add(g)
+    }
     if (off.size) disabledByGroup.set(name, off)
     else disabledByGroup.delete(name)
     refreshMarketView()
     await saveDisabled()
   }
 
-  /** setAll 全选 / 全不选：有选定分组只作用于该组，否则作用于每个模型的最便宜组。 */
+  /**
+   * setAll 全选 / 全不选：作用于当前视图分组。
+   *
+   * 「全不选」只关当前视图这一组（选定分组就是它，否则是每个模型最便宜的那组），
+   * 不把模型的所有分组一起关。理由在 flushDisabled：宿主没有分组维度，全关等于
+   * 把整个模型交给宿主隐藏，109 个模型全关时宿主拿到的是一张空表，供应商掉出。
+   */
   async function setAll(enable) {
     const p = pricing()
     if (!p) return
-    if (marketGroup) {
-      for (const m of p.models) {
-        if (!(m.enable_groups || []).includes(marketGroup)) continue
-        const off = new Set(disabledByGroup.get(m.name) || [])
-        if (enable) off.delete(marketGroup)
-        else off.add(marketGroup)
-        if (off.size) disabledByGroup.set(m.name, off)
-        else disabledByGroup.delete(m.name)
-      }
-    } else if (enable) {
-      // 全选 = 一条例外都不留，模型在它列出的每个分组里都启用
-      disabledByGroup.clear()
-    } else {
-      for (const m of p.models) {
-        const all = (m.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
-        if (all.length) disabledByGroup.set(m.name, new Set(all))
-      }
+    for (const m of p.models) {
+      const g = marketGroup || cheapestGroup(m)
+      if (!g) continue
+      if (marketGroup && !(m.enable_groups || []).includes(marketGroup)) continue
+      const off = new Set(disabledByGroup.get(m.name) || [])
+      if (enable) off.delete(g)
+      else off.add(g)
+      if (off.size) disabledByGroup.set(m.name, off)
+      else disabledByGroup.delete(m.name)
+      // 全选时解除宿主的整模型停用
+      if (enable) hostOff.delete(m.name)
     }
+    if (enable) hostOff.clear()
     render()
     await saveDisabled()
   }
 
   /**
-   * saveDisabled 把「关掉的模型」写进 plugin options，provider 插件按它过滤清单。
+   * saveDisabled 把启用状态落盘：分组明细写本机，整模型停用写宿主。
    *
-   * magpie 限制页面每秒最多写一次 options，连点卡片会被拒（"a page sets its
-   * options once a second at most"）。所以这里合并写入：1.1 秒内的多次改动只发
-   * 最后一次，正在发送时再排队补一次；限流错误不往页脚挂。
+   * 宿主的模型清单没有分组维度——`neartoken-prefs.json` 的 disabled 里只要出现
+   * 一个模型，`HiddenModels()` 就把它整个剔出清单。所以这里只把「它的所有分组
+   * 都停用」的模型交给宿主；部分分组停用只留本机。否则在 A 组关掉会在 B 组一起
+   * 消失，全部关掉时宿主拿到的是一张空表，供应商就直接掉出列表了。
    */
   let saveTimer = null
-  let sending = false
-  let sendAgain = false
   async function flushDisabled() {
     const plain = Object.fromEntries([...disabledByGroup].map(([k, v]) => [k, [...v]]))
-    // 宿主协议：{op:'set', disabled:[{model, groups}]}。写文件不重建插件宿主，供应商不会因此掉。
-    const disabled = Object.entries(plain).map(([model, groups]) => ({ model, groups }))
+    // 本机永远存全量明细：只有页面自己需要分组粒度
+    try {
+      localStorage.setItem(DISABLED_KEY, JSON.stringify(plain))
+    } catch { /* 存不下就只保留本次会话的状态 */ }
+    const p = pricing()
+    const disabled = []
+    for (const [model, groups] of Object.entries(plain)) {
+      const m = p?.models?.find((x) => x.name === model)
+      const all = (m?.enable_groups || []).map((g) => String(g ?? '').trim()).filter(Boolean)
+      if (!all.length) continue
+      // 只有一组都没剩下时才交给宿主隐藏
+      if (all.every((g) => groups.includes(g))) disabled.push({ model, groups })
+    }
     try {
       await bridge.call('neartoken:prefs', { op: 'set', disabled })
       lastError = ''
-      return
-    } catch { /* 宿主不可用，落到本机存储 */ }
-    try {
-      localStorage.setItem(DISABLED_KEY, JSON.stringify(plain))
-      lastError = ''
-    } catch { /* 存不下就只保留本次会话的状态 */ }
+    } catch { /* 宿主没有这个调用：本机明细已经够页面用 */ }
   }
   function saveDisabled() {
     if (saveTimer) clearTimeout(saveTimer)

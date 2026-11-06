@@ -11,6 +11,7 @@ const consts = [
   ...source.match(/^  const (PRICE_TAGS|LEAD_ORDER) = .*$/gm),
   ...source.match(/^  const leadRank = [\s\S]*?\n  \}\n/m),
   ...source.match(/^  const disabledByGroup = new Map\(\)$/m),
+  ...source.match(/^  const hostOff = new Set\(\)$/m),
 ].join('\n')
 
 const p = {
@@ -31,7 +32,7 @@ function make(entries = [], group = '', options = {}) {
     bridge: { call: async () => { throw new Error('no prefs') } },
     localStorage: { getItem: () => null, setItem: () => {} },
   })
-  vm.runInContext(consts + '\n' + fns + '\n;globalThis.__dbg = disabledByGroup;', ctx)
+  vm.runInContext(consts + '\n' + fns + '\n;globalThis.__dbg = disabledByGroup; globalThis.__hostOff = hostOff;', ctx)
   ctx.__dbg.clear()
   for (const [k, v] of entries) ctx.__dbg.set(k, new Set(v))
   return ctx
@@ -76,6 +77,15 @@ test('isOn 跟着当前选定分组切换判定', () => {
   assert.equal(make([['b', ['G2']]], '').isOn(p.models[1]), false)
   assert.equal(make([['b', ['G2']]], 'G2').isOn(p.models[1]), false)
   assert.equal(make([['b', ['G1']]], 'G2').isOn(p.models[1]), true)
+})
+
+test('宿主记的「整模型停用」让该模型在所有分组都显示为关', () => {
+  const ctx = make()
+  // 宿主 disabled 里出现一个模型 = 整个模型下线（没有分组维度）
+  ctx.__hostOff.add('b')
+  assert.equal(ctx.isOn(p.models[1]), false)
+  // 同一次点击把它打开后，宿主的整模型停用要跟着解除
+  assert.equal(ctx.isOn(p.models[0]), true)
 })
 
 test('读回停用表：形状不对就当没有记录，不会把模型判成停用', async () => {
