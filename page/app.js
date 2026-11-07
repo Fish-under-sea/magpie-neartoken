@@ -188,6 +188,30 @@
     if (view.configured && !topupInfo) topupInfo = await call('neartoken:topup')
     if (view.configured && !windows.has(span)) windows.set(span, await call('neartoken:usage', { range: span }))
     render()
+    if (view.configured) selfHealProvider()
+  }
+
+  /**
+   * selfHealProvider 让宿主把「被 setAside 的供应商记录」放回去。
+   *
+   * 宿主的插件重载窗口里会拿不到 provider，把它判成「用户已移除」并留下一条
+   * setAside 记录；重载完成后不会自己恢复，只能手动点「加回来」。
+   * magpie 2.3.2 起有 neartoken:relist 这条专用钩子专门做这件事。
+   *
+   * 每会话最多试两次：第一次失败静默隔 3 秒再试一次，之后不再打扰。
+   * 用户显式移除的不会被恢复——这点由宿主保证。
+   */
+  let relistTries = 0
+  function selfHealProvider() {
+    if (relistTries >= 2) return
+    relistTries += 1
+    const again = () => setTimeout(() => { selfHealProvider() }, 3000)
+    try {
+      call('neartoken:relist').catch(again)
+    } catch {
+      // 老宿主没有这条通道：静默跳过，不影响其它功能
+      if (relistTries < 2) again()
+    }
   }
 
   /**
