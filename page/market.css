@@ -721,9 +721,12 @@
 
 /* 最终对齐：列序 时间（含消耗+令牌）→ 分组 → 模型 → 费用 → 请求体大小 → 流 → Token → 耗时 → 详情。
    列宽用比例分配：容器变宽时各列等比铺开、右侧不留空白，列间距保持一致的呼吸感。
-   第一列收窄，把比例让给分组与模型——两者整体左移并拿到更多宽度。 */
+   每列都套 minmax(0, …)：否则 fr 的下限是内容最小宽度，nowrap 的模型名会把列撑开，
+   整个行溢出容器被硬裁，右侧连省略号都看不到。 */
 .logs .lg-row {
-  grid-template-columns: 1.3fr 1.55fr 2.4fr .85fr .85fr .65fr 1.05fr .9fr 1.5fr;
+  grid-template-columns:
+    minmax(0, 1.3fr) minmax(0, 1.55fr) minmax(0, 2.4fr) minmax(0, .85fr) minmax(0, .85fr)
+    minmax(0, .65fr) minmax(0, 1.05fr) minmax(0, .9fr) minmax(0, 1.5fr);
   padding: 8px 14px;
   column-gap: 16px;
   align-items: start;
@@ -1305,11 +1308,26 @@
 .logs .lg-row > .lg-group-cell {
   display: flex; align-items: center; min-width: 0; max-width: 100%; overflow: hidden;
 }
-/* 模型 + 思考强度同排：模型在前，强度跟在后面，不换行 */
+/* 模型 + 思考强度同排：模型在前，强度跟在后面，不换行。
+   容器要撑满整列（width:100%），胶囊才有收缩空间——否则它按内容宽度撑开，
+   溢出 grid 列后被外层硬裁，连省略号都不出现。 */
 .logs .lg-model-inline {
-  display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; white-space: nowrap;
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; max-width: 100%; width: 100%; white-space: nowrap;
 }
 .logs .lg-model-inline .lg-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 胶囊：覆盖 .lg-pill 的 width:fit-content，改成可收缩的 flex 子项；
+   图标不参与收缩，文字 span 自己省略。 */
+.logs .lg-model-pill {
+  width: auto; flex: 0 1 auto;
+  min-width: 0; overflow: hidden;
+}
+.logs .lg-model-pill > span {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.logs .lg-model-pill > svg,
+.logs .lg-model-pill > img,
+.logs .lg-model-pill > i { flex: none; }
 .logs .lg-model-inline .lg-effort { flex: none; }
 .logs .lg-model-inline .lg-map { flex: none; }
 .logs .lg-group-cell .lg-gb {
