@@ -107,6 +107,54 @@
 - **展示价格有明确来源。** 模型广场使用公开计价规则、当前分组及币种设置；账户、钱包和看板数据由宿主返回。
 - **读不到就说不知道。** 站点没有用量端点时页面写「站点未提供用量统计」，不画一张空图——空图会被读成「这段时间没有消耗」。
 
+## 1.2.0 修掉日志里模型名被硬裁
+
+### 现象
+
+日志表格的「模型」列，同一个模型有时完整、有时被切掉尾巴：
+
+```
+gpt-6.1-sol  high   ← 有思考强度，正常
+gpt-6.1-sc          ← 没有思考强度，被裁
+```
+
+奇怪的是**没有思考强度反而更短**，却更早被裁。
+
+### 根因：不是宽度不够，是胶囊不参与收缩
+
+`.lg-pill` 的基础样式里有 `width: fit-content`。它在 flex 容器里会被当成内容宽度，**不参与收缩**，于是按完整模型名的宽度撑开，溢出 grid 列后被外层直接裁掉——因为溢出发生在胶囊之外，连 `text-overflow: ellipsis` 都没机会生效。
+
+带思考强度的那行之所以正常，是因为多了一个兄弟元素，flex 反而进入了收缩路径。
+
+### 改法
+
+```css
+/* 容器撑满整列，胶囊才有收缩空间 */
+.logs .lg-model-inline { width: 100%; min-width: 0; }
+
+/* 覆盖 .lg-pill 的 width: fit-content */
+.logs .lg-model-pill { width: auto; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+
+/* 文字自己省略，图标不参与收缩 */
+.logs .lg-model-pill > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logs .lg-model-pill > svg, .logs .lg-model-pill > img, .logs .lg-model-pill > i { flex: none; }
+```
+
+同时把 9 列全部套上 `minmax(0, …)`：`fr` 的默认下限是内容最小宽度，`nowrap` 的内容会把列撑开、让整行溢出容器。套上之后列可以真正收缩，内部的 `overflow: hidden` 才会生效。
+
+### 验证
+
+无头 Chrome 实测（1700px 宽、2x 像素比）：
+
+```
+deepseek-flash  High     有强度
+gpt-6.1-sol              无强度，现在完整显示
+gemini-3.1-pro-preview  Low
+grok-4.6-xhigh  High
+```
+
+第二行正是原本被截成 `gpt-6.1-sc` 的那个模型。
+
 ## 1.1.8 收紧模型分类，适配宿主 fish.25 的 kind 接入
 
 宿主 `v0.1.3140+fish.25` 起会把插件声明的 `kind` 接进分类：
